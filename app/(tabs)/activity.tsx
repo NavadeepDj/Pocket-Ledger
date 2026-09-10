@@ -1,10 +1,10 @@
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import React, { useMemo, useState } from 'react';
-import { Alert, FlatList, Platform, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import colors from '@/constants/colors';
-import { Expense, getCategory, SubContext, useExpenses } from '@/context/ExpenseContext';
+import { CategoryItem, Expense, useExpenses } from '@/context/ExpenseContext';
 
 const palette = colors.light;
 const currency = (amount: number) =>
@@ -18,12 +18,14 @@ function ExpenseItem({
   expense,
   onDelete,
   onSelectEvent,
+  getCategoryInfo,
 }: {
   expense: Expense;
   onDelete: () => void;
   onSelectEvent: (event: string) => void;
+  getCategoryInfo: (cat: string) => CategoryItem;
 }) {
-  const category = getCategory(expense.category);
+  const category = getCategoryInfo(expense.category);
   const remove = () => {
     if (Platform.OS === 'web') {
       onDelete();
@@ -38,7 +40,11 @@ function ExpenseItem({
   return (
     <Pressable testID={`expense-${expense.id}`} onLongPress={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).then(remove)} style={({ pressed }) => [styles.item, pressed && styles.itemPressed]}>
       <View style={[styles.icon, { backgroundColor: `${category.color}1C` }]}>
-        <Feather name={category.icon as keyof typeof Feather.glyphMap} size={19} color={category.color} />
+        <Feather
+          name={(category.icon as keyof typeof Feather.glyphMap) || 'tag'}
+          size={19}
+          color={category.color}
+        />
       </View>
       <View style={styles.itemMain}>
         <Text style={styles.note} numberOfLines={1}>{expense.note || expense.category}</Text>
@@ -72,8 +78,8 @@ function ExpenseItem({
 
 export default function ActivityScreen() {
   const insets = useSafeAreaInsets();
-  const { expenses, loading, reload, deleteExpense } = useExpenses();
-  const [filterContext, setFilterContext] = useState<SubContext | 'All'>('All');
+  const { expenses, subContexts, loading, reload, deleteExpense, getCategoryInfo } = useExpenses();
+  const [filterContext, setFilterContext] = useState<string>('All');
   const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
 
   const filteredExpenses = useMemo(() => {
@@ -86,6 +92,10 @@ export default function ActivityScreen() {
 
   const total = filteredExpenses.reduce((sum, item) => sum + item.amount, 0);
 
+  const allContextKeys = useMemo(() => {
+    return ['All', ...subContexts.map((s) => s.key)];
+  }, [subContexts]);
+
   return (
     <View style={styles.screen}>
       <FlatList
@@ -96,6 +106,7 @@ export default function ActivityScreen() {
             expense={item}
             onDelete={() => void deleteExpense(item.id)}
             onSelectEvent={(tag) => setSelectedEvent(tag)}
+            getCategoryInfo={getCategoryInfo}
           />
         )}
         contentContainerStyle={[styles.content, { paddingTop: insets.top + 20, paddingBottom: Math.max(insets.bottom, 24) + 84 }]}
@@ -121,22 +132,24 @@ export default function ActivityScreen() {
             </View>
 
             {/* FILTER PILLS */}
-            <View style={styles.filterPills}>
-              {(['All', 'Personal', 'Developer', 'Office'] as const).map((ctx) => {
-                const active = filterContext === ctx;
-                return (
-                  <Pressable
-                    key={ctx}
-                    onPress={() => setFilterContext(ctx)}
-                    style={[styles.filterPill, active && styles.filterPillActive]}
-                  >
-                    <Text style={[styles.filterPillText, active && styles.filterPillTextActive]}>
-                      {ctx}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 14 }}>
+              <View style={styles.filterPills}>
+                {allContextKeys.map((ctx) => {
+                  const active = filterContext === ctx;
+                  return (
+                    <Pressable
+                      key={ctx}
+                      onPress={() => setFilterContext(ctx)}
+                      style={[styles.filterPill, active && styles.filterPillActive]}
+                    >
+                      <Text style={[styles.filterPillText, active && styles.filterPillTextActive]}>
+                        {ctx}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </ScrollView>
 
             {/* ACTIVE EVENT TAG CHIP */}
             {selectedEvent && (

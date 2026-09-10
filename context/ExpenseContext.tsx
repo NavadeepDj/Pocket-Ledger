@@ -3,13 +3,40 @@ import * as SQLite from 'expo-sqlite';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Platform } from 'react-native';
 
-export type SubContext = 'Personal' | 'Developer' | 'Office';
+export type SubContext = string;
 
-export const SUB_CONTEXTS: { key: SubContext; label: string; icon: string }[] = [
+export type SubContextItem = {
+  key: string;
+  label: string;
+  icon: string;
+};
+
+export const DEFAULT_SUB_CONTEXTS: SubContextItem[] = [
   { key: 'Personal', label: 'Personal', icon: 'user' },
   { key: 'Developer', label: 'Developer', icon: 'code' },
   { key: 'Office', label: 'Office', icon: 'briefcase' },
 ];
+
+export const SUB_CONTEXTS = DEFAULT_SUB_CONTEXTS;
+
+export type CategoryItem = {
+  key: string;
+  label: string;
+  icon: string;
+  color: string;
+};
+
+export const DEFAULT_CATEGORIES: CategoryItem[] = [
+  { key: 'Food', label: 'Food', icon: 'coffee', color: '#F06F58' },
+  { key: 'Transport', label: 'Transport', icon: 'navigation', color: '#7A8FE8' },
+  { key: 'Developer', label: 'Developer', icon: 'terminal', color: '#6366F1' },
+  { key: 'Home', label: 'Home', icon: 'home', color: '#E4A94F' },
+  { key: 'Shopping', label: 'Shopping', icon: 'shopping-bag', color: '#A17BD8' },
+  { key: 'Health', label: 'Health', icon: 'heart', color: '#56A887' },
+  { key: 'Other', label: 'Other', icon: 'more-horizontal', color: '#83908B' },
+];
+
+export const CATEGORIES = DEFAULT_CATEGORIES;
 
 export type Expense = {
   id: string;
@@ -23,17 +50,10 @@ export type Expense = {
   person: string;
 };
 
-export const CATEGORIES = [
-  { key: 'Food', label: 'Food', icon: 'coffee', color: '#F06F58' },
-  { key: 'Transport', label: 'Transport', icon: 'navigation', color: '#7A8FE8' },
-  { key: 'Developer', label: 'Developer', icon: 'terminal', color: '#6366F1' },
-  { key: 'Home', label: 'Home', icon: 'home', color: '#E4A94F' },
-  { key: 'Shopping', label: 'Shopping', icon: 'shopping-bag', color: '#A17BD8' },
-  { key: 'Health', label: 'Health', icon: 'heart', color: '#56A887' },
-  { key: 'Other', label: 'Other', icon: 'more-horizontal', color: '#83908B' },
-] as const;
-
 const STORAGE_KEY = '@pocket-ledger/expenses';
+const CUSTOM_CAT_KEY = '@pocket-ledger/custom_categories';
+const CUSTOM_CTX_KEY = '@pocket-ledger/custom_sub_contexts';
+
 type Database = ReturnType<typeof SQLite.openDatabaseSync>;
 let database: Database | null = null;
 
@@ -53,27 +73,30 @@ function getDatabase() {
         sub_context TEXT NOT NULL DEFAULT 'Personal',
         event_tag TEXT NOT NULL DEFAULT ''
       );
+      CREATE TABLE IF NOT EXISTS custom_categories (
+        key TEXT PRIMARY KEY NOT NULL,
+        label TEXT NOT NULL,
+        icon TEXT NOT NULL,
+        color TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS custom_sub_contexts (
+        key TEXT PRIMARY KEY NOT NULL,
+        label TEXT NOT NULL,
+        icon TEXT NOT NULL
+      );
     `);
     try {
       database.execSync("ALTER TABLE expenses ADD COLUMN direction TEXT NOT NULL DEFAULT 'spent'");
-    } catch {
-      // The column already exists on upgraded databases.
-    }
+    } catch {}
     try {
       database.execSync("ALTER TABLE expenses ADD COLUMN person TEXT NOT NULL DEFAULT ''");
-    } catch {
-      // The column already exists on upgraded databases.
-    }
+    } catch {}
     try {
       database.execSync("ALTER TABLE expenses ADD COLUMN sub_context TEXT NOT NULL DEFAULT 'Personal'");
-    } catch {
-      // The column already exists on upgraded databases.
-    }
+    } catch {}
     try {
       database.execSync("ALTER TABLE expenses ADD COLUMN event_tag TEXT NOT NULL DEFAULT ''");
-    } catch {
-      // The column already exists on upgraded databases.
-    }
+    } catch {}
   }
   return database;
 }
@@ -86,7 +109,7 @@ type DbExpenseRow = {
   date: string;
   direction?: 'spent' | 'received';
   person?: string;
-  sub_context?: SubContext;
+  sub_context?: string;
   event_tag?: string;
 };
 
@@ -94,7 +117,9 @@ async function readExpenses(): Promise<Expense[]> {
   const db = getDatabase();
   if (db) {
     return db
-      .getAllSync<DbExpenseRow>('SELECT id, amount, category, note, date, direction, person, sub_context, event_tag FROM expenses ORDER BY date DESC')
+      .getAllSync<DbExpenseRow>(
+        'SELECT id, amount, category, note, date, direction, person, sub_context, event_tag FROM expenses ORDER BY date DESC',
+      )
       .map((item) => ({
         id: item.id,
         amount: Number(item.amount),
@@ -103,7 +128,7 @@ async function readExpenses(): Promise<Expense[]> {
         date: item.date,
         direction: item.direction ?? 'spent',
         person: item.person ?? '',
-        subContext: (item.sub_context as SubContext) || 'Personal',
+        subContext: item.sub_context || 'Personal',
         eventTag: item.event_tag ?? '',
       }));
   }
@@ -114,7 +139,7 @@ async function readExpenses(): Promise<Expense[]> {
         id: item.id ?? '',
         amount: Number(item.amount ?? 0),
         category: item.category ?? 'Other',
-        subContext: (item.subContext as SubContext) || 'Personal',
+        subContext: item.subContext || 'Personal',
         eventTag: item.eventTag ?? '',
         note: item.note ?? 'Expense',
         date: item.date ?? new Date().toISOString(),
@@ -122,6 +147,24 @@ async function readExpenses(): Promise<Expense[]> {
         person: item.person ?? '',
       }))
     : [];
+}
+
+async function readCustomCategories(): Promise<CategoryItem[]> {
+  const db = getDatabase();
+  if (db) {
+    return db.getAllSync<CategoryItem>('SELECT key, label, icon, color FROM custom_categories');
+  }
+  const stored = await AsyncStorage.getItem(CUSTOM_CAT_KEY);
+  return stored ? JSON.parse(stored) : [];
+}
+
+async function readCustomSubContexts(): Promise<SubContextItem[]> {
+  const db = getDatabase();
+  if (db) {
+    return db.getAllSync<SubContextItem>('SELECT key, label, icon FROM custom_sub_contexts');
+  }
+  const stored = await AsyncStorage.getItem(CUSTOM_CTX_KEY);
+  return stored ? JSON.parse(stored) : [];
 }
 
 async function writeWebExpenses(expenses: Expense[]) {
@@ -143,22 +186,44 @@ export type AddExpenseInput = {
 
 type ExpenseContextValue = {
   expenses: Expense[];
+  categories: CategoryItem[];
+  subContexts: SubContextItem[];
   loading: boolean;
   addExpense: (input: AddExpenseInput) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
+  addCategory: (item: CategoryItem) => Promise<void>;
+  addSubContext: (item: SubContextItem) => Promise<void>;
   reload: () => Promise<void>;
+  getCategoryInfo: (key: string) => CategoryItem;
 };
 
 const ExpenseContext = createContext<ExpenseContextValue | null>(null);
 
 export function ExpenseProvider({ children }: { children: React.ReactNode }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [customCategories, setCustomCategories] = useState<CategoryItem[]>([]);
+  const [customSubContexts, setCustomSubContexts] = useState<SubContextItem[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const categories = useMemo(() => {
+    return [...DEFAULT_CATEGORIES, ...customCategories];
+  }, [customCategories]);
+
+  const subContexts = useMemo(() => {
+    return [...DEFAULT_SUB_CONTEXTS, ...customSubContexts];
+  }, [customSubContexts]);
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      setExpenses(await readExpenses());
+      const [exp, cats, ctxs] = await Promise.all([
+        readExpenses(),
+        readCustomCategories(),
+        readCustomSubContexts(),
+      ]);
+      setExpenses(exp);
+      setCustomCategories(cats);
+      setCustomSubContexts(ctxs);
     } finally {
       setLoading(false);
     }
@@ -168,48 +233,125 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     void reload();
   }, [reload]);
 
-  const addExpense = useCallback(async (input: AddExpenseInput) => {
-    const expense: Expense = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      amount: Number(input.amount),
-      category: input.category,
-      subContext: input.subContext ?? 'Personal',
-      eventTag: (input.eventTag ?? '').trim(),
-      note: input.note.trim(),
-      date: input.date ?? new Date().toISOString(),
-      direction: input.direction,
-      person: input.person.trim(),
-    };
-    const db = getDatabase();
-    if (db) {
-      db.runSync(
-        'INSERT INTO expenses (id, amount, category, note, date, direction, person, sub_context, event_tag) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        expense.id,
-        expense.amount,
-        expense.category,
-        expense.note,
-        expense.date,
-        expense.direction,
-        expense.person,
-        expense.subContext,
-        expense.eventTag,
-      );
-    }
-    setExpenses((current) => [expense, ...current]);
-    await writeWebExpenses([expense, ...expenses]);
-  }, [expenses]);
+  const addExpense = useCallback(
+    async (input: AddExpenseInput) => {
+      const expense: Expense = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        amount: Number(input.amount),
+        category: input.category,
+        subContext: input.subContext ?? 'Personal',
+        eventTag: (input.eventTag ?? '').trim(),
+        note: input.note.trim(),
+        date: input.date ?? new Date().toISOString(),
+        direction: input.direction,
+        person: input.person.trim(),
+      };
+      const db = getDatabase();
+      if (db) {
+        db.runSync(
+          'INSERT INTO expenses (id, amount, category, note, date, direction, person, sub_context, event_tag) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          expense.id,
+          expense.amount,
+          expense.category,
+          expense.note,
+          expense.date,
+          expense.direction,
+          expense.person,
+          expense.subContext,
+          expense.eventTag,
+        );
+      }
+      setExpenses((current) => [expense, ...current]);
+      await writeWebExpenses([expense, ...expenses]);
+    },
+    [expenses],
+  );
 
-  const deleteExpense = useCallback(async (id: string) => {
-    const db = getDatabase();
-    if (db) db.runSync('DELETE FROM expenses WHERE id = ?', id);
-    const next = expenses.filter((expense) => expense.id !== id);
-    setExpenses(next);
-    await writeWebExpenses(next);
-  }, [expenses]);
+  const deleteExpense = useCallback(
+    async (id: string) => {
+      const db = getDatabase();
+      if (db) db.runSync('DELETE FROM expenses WHERE id = ?', id);
+      const next = expenses.filter((expense) => expense.id !== id);
+      setExpenses(next);
+      await writeWebExpenses(next);
+    },
+    [expenses],
+  );
+
+  const addCategory = useCallback(
+    async (item: CategoryItem) => {
+      const db = getDatabase();
+      if (db) {
+        db.runSync(
+          'INSERT OR REPLACE INTO custom_categories (key, label, icon, color) VALUES (?, ?, ?, ?)',
+          item.key,
+          item.label,
+          item.icon,
+          item.color,
+        );
+      }
+      const updated = [...customCategories.filter((c) => c.key !== item.key), item];
+      setCustomCategories(updated);
+      if (Platform.OS === 'web') {
+        await AsyncStorage.setItem(CUSTOM_CAT_KEY, JSON.stringify(updated));
+      }
+    },
+    [customCategories],
+  );
+
+  const addSubContext = useCallback(
+    async (item: SubContextItem) => {
+      const db = getDatabase();
+      if (db) {
+        db.runSync(
+          'INSERT OR REPLACE INTO custom_sub_contexts (key, label, icon) VALUES (?, ?, ?)',
+          item.key,
+          item.label,
+          item.icon,
+        );
+      }
+      const updated = [...customSubContexts.filter((c) => c.key !== item.key), item];
+      setCustomSubContexts(updated);
+      if (Platform.OS === 'web') {
+        await AsyncStorage.setItem(CUSTOM_CTX_KEY, JSON.stringify(updated));
+      }
+    },
+    [customSubContexts],
+  );
+
+  const getCategoryInfo = useCallback(
+    (key: string) => {
+      const found = categories.find((c) => c.key.toLowerCase() === key.toLowerCase());
+      return found ?? DEFAULT_CATEGORIES[DEFAULT_CATEGORIES.length - 1];
+    },
+    [categories],
+  );
 
   const value = useMemo(
-    () => ({ expenses, loading, addExpense, deleteExpense, reload }),
-    [expenses, loading, addExpense, deleteExpense, reload],
+    () => ({
+      expenses,
+      categories,
+      subContexts,
+      loading,
+      addExpense,
+      deleteExpense,
+      addCategory,
+      addSubContext,
+      reload,
+      getCategoryInfo,
+    }),
+    [
+      expenses,
+      categories,
+      subContexts,
+      loading,
+      addExpense,
+      deleteExpense,
+      addCategory,
+      addSubContext,
+      reload,
+      getCategoryInfo,
+    ],
   );
 
   return <ExpenseContext.Provider value={value}>{children}</ExpenseContext.Provider>;
@@ -222,5 +364,5 @@ export function useExpenses() {
 }
 
 export function getCategory(category: string) {
-  return CATEGORIES.find((item) => item.key === category) ?? CATEGORIES[CATEGORIES.length - 1];
+  return DEFAULT_CATEGORIES.find((item) => item.key === category) ?? DEFAULT_CATEGORIES[DEFAULT_CATEGORIES.length - 1];
 }

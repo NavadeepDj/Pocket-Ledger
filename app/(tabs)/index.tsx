@@ -17,10 +17,9 @@ import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
 import {
-  CATEGORIES,
-  getCategory,
-  SUB_CONTEXTS,
-  SubContext,
+  CategoryItem,
+  DEFAULT_CATEGORIES,
+  SubContextItem,
   useExpenses,
 } from '@/context/ExpenseContext';
 import colors from '@/constants/colors';
@@ -31,11 +30,256 @@ const currency = (amount: number) =>
 const compactCurrency = (amount: number) =>
   amount >= 1000 ? `₹${(amount / 1000).toFixed(amount >= 10000 ? 0 : 1)}k` : currency(amount);
 
+const PRESET_COLORS = [
+  '#F06F58', '#7A8FE8', '#6366F1', '#E4A94F',
+  '#A17BD8', '#56A887', '#E11D48', '#0EA5E9',
+  '#D97706', '#10B981', '#8B5CF6', '#F59E0B',
+];
+
 function formatDate(date: string) {
   return new Date(date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 }
 
-function DonutChart({ total, grouped }: { total: number; grouped: { category: string; amount: number }[] }) {
+function isSameDay(d1: Date, d2: Date) {
+  return (
+    d1.getFullYear() === d2.getFullYear() &&
+    d1.getMonth() === d2.getMonth() &&
+    d1.getDate() === d2.getDate()
+  );
+}
+
+function DatePickerModal({
+  visible,
+  currentDate,
+  onSelect,
+  onClose,
+}: {
+  visible: boolean;
+  currentDate: Date;
+  onSelect: (date: Date) => void;
+  onClose: () => void;
+}) {
+  const [viewDate, setViewDate] = useState(new Date(currentDate));
+
+  const year = viewDate.getFullYear();
+  const month = viewDate.getMonth();
+
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDay = new Date(year, month, 1).getDay();
+
+  const prevMonth = () => setViewDate(new Date(year, month - 1, 1));
+  const nextMonth = () => setViewDate(new Date(year, month + 1, 1));
+
+  const monthName = viewDate.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.pickerBackdrop} onPress={onClose}>
+        <Pressable style={styles.pickerCard} onPress={(e) => e.stopPropagation()}>
+          <View style={styles.pickerHeader}>
+            <Text style={styles.pickerTitle}>{monthName}</Text>
+            <View style={{ flexDirection: 'row', gap: 6 }}>
+              <Pressable onPress={prevMonth} style={styles.pickerNavBtn}>
+                <Feather name="chevron-left" size={18} color={palette.foreground} />
+              </Pressable>
+              <Pressable onPress={nextMonth} style={styles.pickerNavBtn}>
+                <Feather name="chevron-right" size={18} color={palette.foreground} />
+              </Pressable>
+            </View>
+          </View>
+
+          <View style={styles.weekdaysRow}>
+            {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d) => (
+              <Text key={d} style={styles.weekdayText}>{d}</Text>
+            ))}
+          </View>
+
+          <View style={styles.daysGrid}>
+            {Array.from({ length: firstDay }).map((_, i) => (
+              <View key={`empty-${i}`} style={styles.dayCell} />
+            ))}
+            {Array.from({ length: daysInMonth }).map((_, i) => {
+              const dayNum = i + 1;
+              const isSelected =
+                currentDate.getFullYear() === year &&
+                currentDate.getMonth() === month &&
+                currentDate.getDate() === dayNum;
+              const isTodayDate =
+                new Date().getFullYear() === year &&
+                new Date().getMonth() === month &&
+                new Date().getDate() === dayNum;
+
+              return (
+                <Pressable
+                  key={`day-${dayNum}`}
+                  onPress={() => {
+                    const picked = new Date(year, month, dayNum);
+                    onSelect(picked);
+                    onClose();
+                  }}
+                  style={[styles.dayCell, isSelected && styles.dayCellSelected, isTodayDate && !isSelected && styles.dayCellToday]}
+                >
+                  <Text style={[styles.dayCellText, isSelected && styles.dayCellTextSelected]}>
+                    {dayNum}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function AddCategoryModal({
+  visible,
+  onAdd,
+  onClose,
+}: {
+  visible: boolean;
+  onAdd: (cat: CategoryItem) => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [selectedColor, setSelectedColor] = useState(PRESET_COLORS[0]);
+  const [error, setError] = useState('');
+
+  const submit = () => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setError('Enter a category name');
+      return;
+    }
+    onAdd({
+      key: trimmed,
+      label: trimmed,
+      icon: 'tag',
+      color: selectedColor,
+    });
+    setName('');
+    setError('');
+    onClose();
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior="padding" style={styles.pickerBackdrop}>
+        <Pressable style={styles.customDialogCard} onPress={(e) => e.stopPropagation()}>
+          <View style={styles.sheetHeader}>
+            <View>
+              <Text style={styles.sheetKicker}>CUSTOM CATEGORY</Text>
+              <Text style={styles.customDialogTitle}>New category</Text>
+            </View>
+            <Pressable onPress={onClose} style={styles.closeButton}>
+              <Feather name="x" size={18} color={palette.foreground} />
+            </Pressable>
+          </View>
+
+          <Text style={styles.fieldLabel}>CATEGORY NAME</Text>
+          <TextInput
+            value={name}
+            onChangeText={(t) => { setName(t); setError(''); }}
+            placeholder="e.g. Gaming, Investments, Gifts"
+            placeholderTextColor={palette.mutedForeground}
+            style={styles.noteInput}
+            autoFocus
+          />
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+          <Text style={styles.fieldLabel}>CHOOSE COLOR</Text>
+          <View style={styles.colorRow}>
+            {PRESET_COLORS.map((c) => (
+              <Pressable
+                key={c}
+                onPress={() => setSelectedColor(c)}
+                style={[styles.colorCircle, { backgroundColor: c }, selectedColor === c && styles.colorCircleSelected]}
+              >
+                {selectedColor === c && <Feather name="check" size={14} color="#FFF" />}
+              </Pressable>
+            ))}
+          </View>
+
+          <Pressable onPress={submit} style={styles.dialogSaveBtn}>
+            <Text style={styles.saveButtonText}>Create category</Text>
+          </Pressable>
+        </Pressable>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+function AddSubContextModal({
+  visible,
+  onAdd,
+  onClose,
+}: {
+  visible: boolean;
+  onAdd: (ctx: SubContextItem) => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState('');
+  const [error, setError] = useState('');
+
+  const submit = () => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setError('Enter a context name');
+      return;
+    }
+    onAdd({
+      key: trimmed,
+      label: trimmed,
+      icon: 'folder',
+    });
+    setName('');
+    setError('');
+    onClose();
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior="padding" style={styles.pickerBackdrop}>
+        <Pressable style={styles.customDialogCard} onPress={(e) => e.stopPropagation()}>
+          <View style={styles.sheetHeader}>
+            <View>
+              <Text style={styles.sheetKicker}>CUSTOM SPHERE</Text>
+              <Text style={styles.customDialogTitle}>New context</Text>
+            </View>
+            <Pressable onPress={onClose} style={styles.closeButton}>
+              <Feather name="x" size={18} color={palette.foreground} />
+            </Pressable>
+          </View>
+
+          <Text style={styles.fieldLabel}>CONTEXT NAME</Text>
+          <TextInput
+            value={name}
+            onChangeText={(t) => { setName(t); setError(''); }}
+            placeholder="e.g. Freelance, College, Startup"
+            placeholderTextColor={palette.mutedForeground}
+            style={styles.noteInput}
+            autoFocus
+          />
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+          <Pressable onPress={submit} style={styles.dialogSaveBtn}>
+            <Text style={styles.saveButtonText}>Create context</Text>
+          </Pressable>
+        </Pressable>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+function DonutChart({
+  total,
+  grouped,
+  getCatColor,
+}: {
+  total: number;
+  grouped: { category: string; amount: number }[];
+  getCatColor: (cat: string) => string;
+}) {
   const size = Math.min(Dimensions.get('window').width - 48, 228);
   const strokeWidth = 22;
   const radius = (size - strokeWidth) / 2;
@@ -56,13 +300,14 @@ function DonutChart({ total, grouped }: { total: number; grouped: { category: st
         {total > 0 &&
           grouped.map((item) => {
             const segment = (item.amount / total) * circumference;
+            const color = getCatColor(item.category);
             const node = (
               <Circle
                 key={item.category}
                 cx={size / 2}
                 cy={size / 2}
                 r={radius}
-                stroke={getCategory(item.category).color}
+                stroke={color}
                 strokeWidth={strokeWidth}
                 fill="none"
                 strokeDasharray={`${segment} ${circumference - segment}`}
@@ -94,15 +339,24 @@ function AddExpenseModal({
   existingEvents?: string[];
 }) {
   const insets = useSafeAreaInsets();
-  const { addExpense } = useExpenses();
+  const { addExpense, categories, subContexts, addCategory, addSubContext } = useExpenses();
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
   const [category, setCategory] = useState('Food');
   const [direction, setDirection] = useState<'spent' | 'received'>('spent');
   const [person, setPerson] = useState('');
-  const [subContext, setSubContext] = useState<SubContext>('Personal');
+  const [subContext, setSubContext] = useState<string>('Personal');
   const [eventTag, setEventTag] = useState('');
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showAddCatModal, setShowAddCatModal] = useState(false);
+  const [showAddCtxModal, setShowAddCtxModal] = useState(false);
   const [error, setError] = useState('');
+
+  const isCurrentDay = isSameDay(selectedDate, new Date());
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterdayDay = isSameDay(selectedDate, yesterday);
 
   const save = async () => {
     const numericAmount = Number(amount.replace(',', '.'));
@@ -118,6 +372,7 @@ function AddExpenseModal({
       person,
       subContext,
       eventTag,
+      date: selectedDate.toISOString(),
     });
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setAmount('');
@@ -127,6 +382,7 @@ function AddExpenseModal({
     setPerson('');
     setSubContext('Personal');
     setEventTag('');
+    setSelectedDate(new Date());
     setError('');
     Keyboard.dismiss();
     onClose();
@@ -149,6 +405,7 @@ function AddExpenseModal({
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.sheetScroll}>
+            {/* AMOUNT */}
             <Text style={styles.fieldLabel}>AMOUNT</Text>
             <View style={styles.amountInputWrap}>
               <Text style={styles.currencyPrefix}>₹</Text>
@@ -167,6 +424,42 @@ function AddExpenseModal({
               />
             </View>
 
+            {/* DATE SELECTOR */}
+            <Text style={styles.fieldLabel}>DATE</Text>
+            <View style={styles.dateRow}>
+              <Pressable
+                onPress={() => setSelectedDate(new Date())}
+                style={[styles.dateChip, isCurrentDay && styles.dateChipSelected]}
+              >
+                <Feather name="calendar" size={13} color={isCurrentDay ? palette.primaryForeground : palette.foreground} />
+                <Text style={[styles.dateChipText, isCurrentDay && styles.dateChipTextSelected]}>Today</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => setSelectedDate(yesterday)}
+                style={[styles.dateChip, isYesterdayDay && styles.dateChipSelected]}
+              >
+                <Text style={[styles.dateChipText, isYesterdayDay && styles.dateChipTextSelected]}>Yesterday</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => setShowDatePicker(true)}
+                style={[styles.dateChip, !isCurrentDay && !isYesterdayDay && styles.dateChipSelected]}
+              >
+                <Feather
+                  name="edit-3"
+                  size={13}
+                  color={!isCurrentDay && !isYesterdayDay ? palette.primaryForeground : palette.foreground}
+                />
+                <Text style={[styles.dateChipText, !isCurrentDay && !isYesterdayDay && styles.dateChipTextSelected]}>
+                  {!isCurrentDay && !isYesterdayDay
+                    ? selectedDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+                    : 'Pick Date'}
+                </Text>
+              </Pressable>
+            </View>
+
+            {/* TRANSACTION TYPE */}
             <Text style={styles.fieldLabel}>TRANSACTION TYPE</Text>
             <View style={styles.flowToggle}>
               <Pressable testID="direction-spent" onPress={() => setDirection('spent')} style={[styles.flowOption, direction === 'spent' && styles.flowOptionSelected]}>
@@ -179,28 +472,38 @@ function AddExpenseModal({
               </Pressable>
             </View>
 
-            <Text style={styles.fieldLabel}>CONTEXT SPHERE</Text>
-            <View style={styles.contextToggle}>
-              {SUB_CONTEXTS.map((item) => {
-                const selected = subContext === item.key;
-                return (
-                  <Pressable
-                    testID={`context-${item.key}`}
-                    key={item.key}
-                    onPress={() => setSubContext(item.key)}
-                    style={[styles.contextOption, selected && styles.contextOptionSelected]}
-                  >
-                    <Feather
-                      name={item.icon as keyof typeof Feather.glyphMap}
-                      size={13}
-                      color={selected ? palette.primaryForeground : palette.foreground}
-                    />
-                    <Text style={[styles.contextText, selected && styles.contextTextSelected]}>{item.label}</Text>
-                  </Pressable>
-                );
-              })}
+            {/* CONTEXT SPHERE */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={styles.fieldLabel}>CONTEXT SPHERE</Text>
+              <Pressable onPress={() => setShowAddCtxModal(true)} style={styles.addNewLabelBtn}>
+                <Feather name="plus" size={12} color="#6366F1" />
+                <Text style={styles.addNewLabelText}>Add Context</Text>
+              </Pressable>
             </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+              <View style={styles.contextToggle}>
+                {subContexts.map((item) => {
+                  const selected = subContext === item.key;
+                  return (
+                    <Pressable
+                      testID={`context-${item.key}`}
+                      key={item.key}
+                      onPress={() => setSubContext(item.key)}
+                      style={[styles.contextOption, selected && styles.contextOptionSelected]}
+                    >
+                      <Feather
+                        name={(item.icon as keyof typeof Feather.glyphMap) || 'folder'}
+                        size={13}
+                        color={selected ? palette.primaryForeground : palette.foreground}
+                      />
+                      <Text style={[styles.contextText, selected && styles.contextTextSelected]}>{item.label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </ScrollView>
 
+            {/* EVENT TAG (SHOWN FOR DEVELOPER OR WHEN ENTERED) */}
             {(subContext === 'Developer' || eventTag.length > 0) && (
               <View style={styles.eventInputBox}>
                 <View style={styles.eventInputHeader}>
@@ -234,9 +537,16 @@ function AddExpenseModal({
               </View>
             )}
 
-            <Text style={styles.fieldLabel}>CATEGORY</Text>
+            {/* CATEGORY */}
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={styles.fieldLabel}>CATEGORY</Text>
+              <Pressable onPress={() => setShowAddCatModal(true)} style={styles.addNewLabelBtn}>
+                <Feather name="plus" size={12} color="#6366F1" />
+                <Text style={styles.addNewLabelText}>Add Category</Text>
+              </Pressable>
+            </View>
             <View style={styles.categoryGrid}>
-              {CATEGORIES.map((item) => {
+              {categories.map((item) => {
                 const selected = category === item.key;
                 return (
                   <Pressable
@@ -245,11 +555,19 @@ function AddExpenseModal({
                     onPress={() => setCategory(item.key)}
                     style={[styles.categoryOption, selected && { backgroundColor: item.color }]}
                   >
-                    <Feather name={item.icon as keyof typeof Feather.glyphMap} size={15} color={selected ? '#FFFDF8' : item.color} />
+                    <Feather
+                      name={(item.icon as keyof typeof Feather.glyphMap) || 'tag'}
+                      size={15}
+                      color={selected ? '#FFFDF8' : item.color}
+                    />
                     <Text style={[styles.categoryOptionText, selected && styles.categoryOptionTextSelected]}>{item.label}</Text>
                   </Pressable>
                 );
               })}
+              <Pressable onPress={() => setShowAddCatModal(true)} style={styles.categoryAddOption}>
+                <Feather name="plus" size={14} color={palette.primary} />
+                <Text style={styles.categoryAddText}>New</Text>
+              </Pressable>
             </View>
 
             <Text style={styles.fieldLabel}>PERSON <Text style={styles.optional}>OPTIONAL</Text></Text>
@@ -282,13 +600,37 @@ function AddExpenseModal({
           </ScrollView>
         </View>
       </KeyboardAvoidingView>
+
+      {/* SUB-MODALS */}
+      <DatePickerModal
+        visible={showDatePicker}
+        currentDate={selectedDate}
+        onSelect={(d) => setSelectedDate(d)}
+        onClose={() => setShowDatePicker(false)}
+      />
+      <AddCategoryModal
+        visible={showAddCatModal}
+        onAdd={(newCat) => {
+          void addCategory(newCat);
+          setCategory(newCat.key);
+        }}
+        onClose={() => setShowAddCatModal(false)}
+      />
+      <AddSubContextModal
+        visible={showAddCtxModal}
+        onAdd={(newCtx) => {
+          void addSubContext(newCtx);
+          setSubContext(newCtx.key);
+        }}
+        onClose={() => setShowAddCtxModal(false)}
+      />
     </Modal>
   );
 }
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const { expenses, loading } = useExpenses();
+  const { expenses, loading, getCategoryInfo } = useExpenses();
   const [modalVisible, setModalVisible] = useState(false);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
 
@@ -315,10 +657,10 @@ export default function HomeScreen() {
 
   // Sub-Context Breakdown by Category
   const categorySubBreakdown = useMemo(() => {
-    const map = new Map<string, Map<SubContext, number>>();
+    const map = new Map<string, Map<string, number>>();
     monthSpent.forEach((expense) => {
       if (!map.has(expense.category)) {
-        map.set(expense.category, new Map<SubContext, number>());
+        map.set(expense.category, new Map<string, number>());
       }
       const catMap = map.get(expense.category)!;
       catMap.set(expense.subContext, (catMap.get(expense.subContext) ?? 0) + expense.amount);
@@ -409,13 +751,17 @@ export default function HomeScreen() {
           <Text style={styles.sectionTotal}>{compactCurrency(total)}</Text>
         </View>
         <View style={styles.breakdownCard}>
-          <DonutChart total={total} grouped={grouped} />
+          <DonutChart
+            total={total}
+            grouped={grouped}
+            getCatColor={(cat) => getCategoryInfo(cat).color}
+          />
           {grouped.length > 0 ? (
             <View style={styles.legend}>
-              <Text style={styles.legendHelper}>Tap any category to see Personal, Office & Developer split</Text>
+              <Text style={styles.legendHelper}>Tap any category to see context split</Text>
               {grouped.map((item) => {
                 const isExpanded = expandedCategory === item.category;
-                const catMeta = getCategory(item.category);
+                const catMeta = getCategoryInfo(item.category);
                 const subMap = categorySubBreakdown.get(item.category);
                 return (
                   <View key={item.category} style={styles.categoryItemWrap}>
@@ -435,8 +781,7 @@ export default function HomeScreen() {
                     </Pressable>
                     {isExpanded && subMap && (
                       <View style={styles.subBreakdownBox}>
-                        {(['Personal', 'Developer', 'Office'] as SubContext[]).map((ctx) => {
-                          const amt = subMap.get(ctx) ?? 0;
+                        {Array.from(subMap.entries()).map(([ctx, amt]) => {
                           if (amt === 0) return null;
                           return (
                             <View key={ctx} style={styles.subBreakdownRow}>
@@ -530,11 +875,15 @@ export default function HomeScreen() {
         </View>
         <View style={styles.recentCard}>
           {recent.length > 0 ? recent.map((expense, index) => {
-            const meta = getCategory(expense.category);
+            const meta = getCategoryInfo(expense.category);
             return (
               <View key={expense.id} style={[styles.expenseRow, index < recent.length - 1 && styles.expenseRowBorder]}>
                 <View style={[styles.expenseIcon, { backgroundColor: `${meta.color}1C` }]}>
-                  <Feather name={expense.direction === 'received' ? 'arrow-down-left' : meta.icon as keyof typeof Feather.glyphMap} size={18} color={expense.direction === 'received' ? palette.foreground : meta.color} />
+                  <Feather
+                    name={(meta.icon as keyof typeof Feather.glyphMap) || (expense.direction === 'received' ? 'arrow-down-left' : 'tag')}
+                    size={18}
+                    color={expense.direction === 'received' ? palette.foreground : meta.color}
+                  />
                 </View>
                 <View style={styles.expenseMain}>
                   <Text style={styles.expenseNote} numberOfLines={1}>{expense.note || expense.category}</Text>
@@ -665,26 +1014,33 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.82 },
   modalBackdrop: { flex: 1, justifyContent: 'flex-end' },
   modalDismiss: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(25,51,47,0.38)' },
-  sheet: { backgroundColor: palette.background, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 20, paddingTop: 11, maxHeight: '90%' },
+  sheet: { backgroundColor: palette.background, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 20, paddingTop: 11, maxHeight: '92%' },
   sheetHandle: { width: 38, height: 4, borderRadius: 2, backgroundColor: '#C8C2B7', alignSelf: 'center', marginBottom: 18 },
-  sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   sheetScroll: { paddingBottom: 20 },
   sheetKicker: { color: palette.primary, fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.4 },
   sheetTitle: { color: palette.foreground, fontFamily: 'Inter_700Bold', fontSize: 26, letterSpacing: -0.7, marginTop: 4 },
   closeButton: { width: 38, height: 38, backgroundColor: palette.card, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   fieldLabel: { color: palette.mutedForeground, fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.2, marginBottom: 8 },
   optional: { color: '#A4AAA4', fontFamily: 'Inter_500Medium', letterSpacing: 0.8 },
-  amountInputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: palette.card, borderWidth: 1, borderColor: palette.input, borderRadius: 16, paddingHorizontal: 16, marginBottom: 16 },
+  amountInputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: palette.card, borderWidth: 1, borderColor: palette.input, borderRadius: 16, paddingHorizontal: 16, marginBottom: 14 },
   currencyPrefix: { color: palette.primary, fontFamily: 'Inter_700Bold', fontSize: 25, marginRight: 5 },
   amountInput: { flex: 1, color: palette.foreground, fontFamily: 'Inter_700Bold', fontSize: 29, paddingVertical: 14 },
+  dateRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  dateChip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 9, paddingHorizontal: 12, borderRadius: 11, backgroundColor: palette.card, borderWidth: 1, borderColor: '#ECE8DE' },
+  dateChipSelected: { backgroundColor: palette.primary, borderColor: palette.primary },
+  dateChipText: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 12 },
+  dateChipTextSelected: { color: palette.primaryForeground },
   flowToggle: { flexDirection: 'row', backgroundColor: palette.muted, borderRadius: 14, padding: 4, marginBottom: 16 },
   flowOption: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: 11, paddingVertical: 11 },
   flowOptionSelected: { backgroundColor: palette.primary },
   flowText: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 13 },
   flowTextSelected: { color: palette.primaryForeground },
-  contextToggle: { flexDirection: 'row', backgroundColor: palette.muted, borderRadius: 14, padding: 4, marginBottom: 16 },
-  contextOption: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderRadius: 11, paddingVertical: 10 },
-  contextOptionSelected: { backgroundColor: palette.primary },
+  addNewLabelBtn: { flexDirection: 'row', alignItems: 'center', gap: 3, paddingBottom: 6 },
+  addNewLabelText: { color: '#6366F1', fontFamily: 'Inter_600SemiBold', fontSize: 11 },
+  contextToggle: { flexDirection: 'row', gap: 8, paddingVertical: 2 },
+  contextOption: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 11, paddingVertical: 9, paddingHorizontal: 12, backgroundColor: palette.card, borderWidth: 1, borderColor: '#ECE8DE' },
+  contextOptionSelected: { backgroundColor: palette.primary, borderColor: palette.primary },
   contextText: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 12 },
   contextTextSelected: { color: palette.primaryForeground },
   eventInputBox: { backgroundColor: '#F8F9FE', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#E0E3FA', marginBottom: 16 },
@@ -700,8 +1056,29 @@ const styles = StyleSheet.create({
   categoryOption: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 10, backgroundColor: palette.card, borderWidth: 1, borderColor: '#E8E3D9' },
   categoryOptionText: { color: palette.foreground, fontFamily: 'Inter_500Medium', fontSize: 12, marginLeft: 6 },
   categoryOptionTextSelected: { color: '#FFFDF8', fontFamily: 'Inter_600SemiBold' },
+  categoryAddOption: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 10, backgroundColor: '#FAF8F4', borderWidth: 1, borderColor: '#D9D3C7', borderStyle: 'dashed', gap: 4 },
+  categoryAddText: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 12 },
   noteInput: { backgroundColor: palette.card, borderWidth: 1, borderColor: palette.input, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 13, color: palette.foreground, fontFamily: 'Inter_400Regular', fontSize: 14, marginBottom: 14 },
   errorText: { color: palette.destructive, fontFamily: 'Inter_500Medium', fontSize: 12, marginBottom: 9 },
   saveButton: { height: 52, borderRadius: 16, backgroundColor: palette.foreground, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, marginTop: 4, marginBottom: 20 },
   saveButtonText: { color: '#FFFDF8', fontFamily: 'Inter_600SemiBold', fontSize: 15 },
+  pickerBackdrop: { flex: 1, backgroundColor: 'rgba(25,51,47,0.45)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  pickerCard: { width: '100%', maxWidth: 340, backgroundColor: palette.card, borderRadius: 24, padding: 20, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 18, elevation: 8 },
+  pickerHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  pickerTitle: { color: palette.foreground, fontFamily: 'Inter_700Bold', fontSize: 16 },
+  pickerNavBtn: { width: 34, height: 34, borderRadius: 10, backgroundColor: palette.muted, alignItems: 'center', justifyContent: 'center' },
+  weekdaysRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+  weekdayText: { width: 38, textAlign: 'center', color: palette.mutedForeground, fontFamily: 'Inter_600SemiBold', fontSize: 11 },
+  daysGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-start' },
+  dayCell: { width: `${100 / 7}%`, aspectRatio: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 10, marginVertical: 2 },
+  dayCellSelected: { backgroundColor: palette.primary },
+  dayCellToday: { borderWidth: 1.5, borderColor: palette.primary },
+  dayCellText: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 13 },
+  dayCellTextSelected: { color: palette.primaryForeground },
+  customDialogCard: { width: '100%', maxWidth: 340, backgroundColor: palette.background, borderRadius: 24, padding: 20, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 20, elevation: 9 },
+  customDialogTitle: { color: palette.foreground, fontFamily: 'Inter_700Bold', fontSize: 22, letterSpacing: -0.5, marginTop: 2 },
+  colorRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 18 },
+  colorCircle: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  colorCircleSelected: { transform: [{ scale: 1.15 }], borderWidth: 2, borderColor: '#FFF' },
+  dialogSaveBtn: { height: 48, borderRadius: 14, backgroundColor: palette.foreground, alignItems: 'center', justifyContent: 'center', marginTop: 6 },
 });

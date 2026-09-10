@@ -16,7 +16,13 @@ import {
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle } from 'react-native-svg';
-import { CATEGORIES, getCategory, useExpenses } from '@/context/ExpenseContext';
+import {
+  CATEGORIES,
+  getCategory,
+  SUB_CONTEXTS,
+  SubContext,
+  useExpenses,
+} from '@/context/ExpenseContext';
 import colors from '@/constants/colors';
 
 const palette = colors.light;
@@ -81,9 +87,11 @@ function DonutChart({ total, grouped }: { total: number; grouped: { category: st
 function AddExpenseModal({
   visible,
   onClose,
+  existingEvents = [],
 }: {
   visible: boolean;
   onClose: () => void;
+  existingEvents?: string[];
 }) {
   const insets = useSafeAreaInsets();
   const { addExpense } = useExpenses();
@@ -92,6 +100,8 @@ function AddExpenseModal({
   const [category, setCategory] = useState('Food');
   const [direction, setDirection] = useState<'spent' | 'received'>('spent');
   const [person, setPerson] = useState('');
+  const [subContext, setSubContext] = useState<SubContext>('Personal');
+  const [eventTag, setEventTag] = useState('');
   const [error, setError] = useState('');
 
   const save = async () => {
@@ -100,13 +110,23 @@ function AddExpenseModal({
       setError('Enter an amount greater than zero');
       return;
     }
-    await addExpense({ amount: numericAmount, note: note || (direction === 'spent' ? 'Expense' : 'Money received'), category, direction, person });
+    await addExpense({
+      amount: numericAmount,
+      note: note || (direction === 'spent' ? 'Expense' : 'Money received'),
+      category,
+      direction,
+      person,
+      subContext,
+      eventTag,
+    });
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setAmount('');
     setNote('');
     setCategory('Food');
     setDirection('spent');
     setPerson('');
+    setSubContext('Personal');
+    setEventTag('');
     setError('');
     Keyboard.dismiss();
     onClose();
@@ -159,16 +179,60 @@ function AddExpenseModal({
               </Pressable>
             </View>
 
-            <Text style={styles.fieldLabel}>PERSON <Text style={styles.optional}>OPTIONAL</Text></Text>
-            <TextInput
-              testID="expense-person"
-              value={person}
-              onChangeText={setPerson}
-              placeholder="e.g. Anjana"
-              placeholderTextColor={palette.mutedForeground}
-              style={styles.noteInput}
-              autoCapitalize="words"
-            />
+            <Text style={styles.fieldLabel}>CONTEXT SPHERE</Text>
+            <View style={styles.contextToggle}>
+              {SUB_CONTEXTS.map((item) => {
+                const selected = subContext === item.key;
+                return (
+                  <Pressable
+                    testID={`context-${item.key}`}
+                    key={item.key}
+                    onPress={() => setSubContext(item.key)}
+                    style={[styles.contextOption, selected && styles.contextOptionSelected]}
+                  >
+                    <Feather
+                      name={item.icon as keyof typeof Feather.glyphMap}
+                      size={13}
+                      color={selected ? palette.primaryForeground : palette.foreground}
+                    />
+                    <Text style={[styles.contextText, selected && styles.contextTextSelected]}>{item.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {(subContext === 'Developer' || eventTag.length > 0) && (
+              <View style={styles.eventInputBox}>
+                <View style={styles.eventInputHeader}>
+                  <Feather name="calendar" size={13} color="#6366F1" />
+                  <Text style={styles.eventFieldLabel}>EVENT / TRIP NAME <Text style={styles.optional}>OPTIONAL</Text></Text>
+                </View>
+                <TextInput
+                  testID="expense-event-tag"
+                  value={eventTag}
+                  onChangeText={setEventTag}
+                  placeholder="e.g. DevFest, Hackathon 2026"
+                  placeholderTextColor={palette.mutedForeground}
+                  style={styles.noteInput}
+                  autoCapitalize="words"
+                />
+                {existingEvents.length > 0 ? (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tagChipsScroll} contentContainerStyle={styles.tagChipsContent}>
+                    {existingEvents.map((tag) => (
+                      <Pressable
+                        key={tag}
+                        onPress={() => setEventTag(tag)}
+                        style={[styles.tagChip, eventTag === tag && styles.tagChipSelected]}
+                      >
+                        <Text style={[styles.tagChipText, eventTag === tag && styles.tagChipTextSelected]}>
+                          #{tag}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                ) : null}
+              </View>
+            )}
 
             <Text style={styles.fieldLabel}>CATEGORY</Text>
             <View style={styles.categoryGrid}>
@@ -181,12 +245,23 @@ function AddExpenseModal({
                     onPress={() => setCategory(item.key)}
                     style={[styles.categoryOption, selected && { backgroundColor: item.color }]}
                   >
-                    <Feather name={item.icon as keyof typeof Feather.glyphMap} size={16} color={selected ? '#FFFDF8' : item.color} />
+                    <Feather name={item.icon as keyof typeof Feather.glyphMap} size={15} color={selected ? '#FFFDF8' : item.color} />
                     <Text style={[styles.categoryOptionText, selected && styles.categoryOptionTextSelected]}>{item.label}</Text>
                   </Pressable>
                 );
               })}
             </View>
+
+            <Text style={styles.fieldLabel}>PERSON <Text style={styles.optional}>OPTIONAL</Text></Text>
+            <TextInput
+              testID="expense-person"
+              value={person}
+              onChangeText={setPerson}
+              placeholder="e.g. Rahul"
+              placeholderTextColor={palette.mutedForeground}
+              style={styles.noteInput}
+              autoCapitalize="words"
+            />
 
             <Text style={styles.fieldLabel}>NOTE <Text style={styles.optional}>OPTIONAL</Text></Text>
             <TextInput
@@ -215,6 +290,8 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { expenses, loading } = useExpenses();
   const [modalVisible, setModalVisible] = useState(false);
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+
   const currentMonth = new Date().getMonth();
   const currentYear = new Date().getFullYear();
   const monthExpenses = expenses.filter((expense) => {
@@ -226,6 +303,8 @@ export default function HomeScreen() {
   const todayTotal = monthSpent
     .filter((expense) => new Date(expense.date).toDateString() === new Date().toDateString())
     .reduce((sum, expense) => sum + expense.amount, 0);
+
+  // Grouped by Category for Donut Chart
   const grouped = useMemo(() => {
     const map = new Map<string, number>();
     monthSpent.forEach((expense) => map.set(expense.category, (map.get(expense.category) ?? 0) + expense.amount));
@@ -233,6 +312,63 @@ export default function HomeScreen() {
       .map(([category, amount]) => ({ category, amount }))
       .sort((a, b) => b.amount - a.amount);
   }, [monthSpent]);
+
+  // Sub-Context Breakdown by Category
+  const categorySubBreakdown = useMemo(() => {
+    const map = new Map<string, Map<SubContext, number>>();
+    monthSpent.forEach((expense) => {
+      if (!map.has(expense.category)) {
+        map.set(expense.category, new Map<SubContext, number>());
+      }
+      const catMap = map.get(expense.category)!;
+      catMap.set(expense.subContext, (catMap.get(expense.subContext) ?? 0) + expense.amount);
+    });
+    return map;
+  }, [monthSpent]);
+
+  // Developer & Events Aggregation
+  const developerData = useMemo(() => {
+    const devExpenses = monthSpent.filter(
+      (e) => e.category === 'Developer' || e.subContext === 'Developer',
+    );
+    const devTotal = devExpenses.reduce((sum, e) => sum + e.amount, 0);
+
+    const eventMap = new Map<string, { total: number; categories: Map<string, number> }>();
+    let generalDevTotal = 0;
+
+    devExpenses.forEach((e) => {
+      const tag = e.eventTag.trim();
+      if (tag) {
+        if (!eventMap.has(tag)) {
+          eventMap.set(tag, { total: 0, categories: new Map() });
+        }
+        const record = eventMap.get(tag)!;
+        record.total += e.amount;
+        record.categories.set(e.category, (record.categories.get(e.category) ?? 0) + e.amount);
+      } else {
+        generalDevTotal += e.amount;
+      }
+    });
+
+    const eventsList = Array.from(eventMap.entries()).map(([name, data]) => ({
+      name,
+      total: data.total,
+      breakdown: Array.from(data.categories.entries()).map(([cat, amt]) => ({ category: cat, amount: amt })),
+    }));
+
+    return {
+      devTotal,
+      devCount: devExpenses.length,
+      eventsList,
+      generalDevTotal,
+    };
+  }, [monthSpent]);
+
+  // Existing event tags across history for quick selection
+  const existingEvents = useMemo(() => {
+    return Array.from(new Set(expenses.map((e) => e.eventTag.trim()).filter(Boolean)));
+  }, [expenses]);
+
   const recent = expenses.slice(0, 4);
 
   return (
@@ -251,6 +387,7 @@ export default function HomeScreen() {
           </Pressable>
         </View>
 
+        {/* HERO CARD */}
         <View style={styles.heroCard}>
           <View style={styles.heroTop}>
             <Text style={styles.heroLabel}>SPENT THIS MONTH</Text>
@@ -266,6 +403,7 @@ export default function HomeScreen() {
           </View>
         </View>
 
+        {/* CATEGORY BREAKDOWN */}
         <View style={styles.sectionHeading}>
           <View><Text style={styles.sectionKicker}>YOUR BREAKDOWN</Text><Text style={styles.sectionTitle}>Where it goes</Text></View>
           <Text style={styles.sectionTotal}>{compactCurrency(total)}</Text>
@@ -274,13 +412,44 @@ export default function HomeScreen() {
           <DonutChart total={total} grouped={grouped} />
           {grouped.length > 0 ? (
             <View style={styles.legend}>
-              {grouped.slice(0, 4).map((item) => (
-                <View key={item.category} style={styles.legendRow}>
-                  <View style={[styles.legendDot, { backgroundColor: getCategory(item.category).color }]} />
-                  <Text style={styles.legendLabel}>{item.category}</Text>
-                  <Text style={styles.legendAmount}>{currency(item.amount)}</Text>
-                </View>
-              ))}
+              <Text style={styles.legendHelper}>Tap any category to see Personal, Office & Developer split</Text>
+              {grouped.map((item) => {
+                const isExpanded = expandedCategory === item.category;
+                const catMeta = getCategory(item.category);
+                const subMap = categorySubBreakdown.get(item.category);
+                return (
+                  <View key={item.category} style={styles.categoryItemWrap}>
+                    <Pressable
+                      onPress={() => setExpandedCategory(isExpanded ? null : item.category)}
+                      style={styles.legendRow}
+                    >
+                      <View style={[styles.legendDot, { backgroundColor: catMeta.color }]} />
+                      <Text style={styles.legendLabel}>{item.category}</Text>
+                      <Text style={styles.legendAmount}>{currency(item.amount)}</Text>
+                      <Feather
+                        name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                        size={14}
+                        color={palette.mutedForeground}
+                        style={{ marginLeft: 6 }}
+                      />
+                    </Pressable>
+                    {isExpanded && subMap && (
+                      <View style={styles.subBreakdownBox}>
+                        {(['Personal', 'Developer', 'Office'] as SubContext[]).map((ctx) => {
+                          const amt = subMap.get(ctx) ?? 0;
+                          if (amt === 0) return null;
+                          return (
+                            <View key={ctx} style={styles.subBreakdownRow}>
+                              <Text style={styles.subBreakdownLabel}>• {ctx}</Text>
+                              <Text style={styles.subBreakdownAmt}>{currency(amt)}</Text>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
             </View>
           ) : (
             <View style={styles.emptyChart}>
@@ -291,6 +460,70 @@ export default function HomeScreen() {
           )}
         </View>
 
+        {/* DEVELOPER & EVENTS SPOTLIGHT */}
+        <View style={styles.sectionHeading}>
+          <View>
+            <Text style={styles.sectionKicker}>DEVELOPER & EVENTS</Text>
+            <Text style={styles.sectionTitle}>Journey & Conferences</Text>
+          </View>
+          <Text style={styles.sectionTotal}>{compactCurrency(developerData.devTotal)}</Text>
+        </View>
+
+        {developerData.devTotal > 0 ? (
+          <View style={styles.devCard}>
+            <View style={styles.devHeader}>
+              <View style={styles.devIconWrap}>
+                <Feather name="terminal" size={20} color="#6366F1" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.devCardEyebrow}>DEVELOPER SPEND THIS MONTH</Text>
+                <Text style={styles.devCardTotal}>{currency(developerData.devTotal)}</Text>
+              </View>
+              <View style={styles.devBadge}>
+                <Text style={styles.devBadgeText}>{developerData.devCount} items</Text>
+              </View>
+            </View>
+
+            {developerData.eventsList.map((event) => (
+              <View key={event.name} style={styles.eventBox}>
+                <View style={styles.eventBoxHeader}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Feather name="calendar" size={14} color="#6366F1" />
+                    <Text style={styles.eventBoxTitle}>#{event.name}</Text>
+                  </View>
+                  <Text style={styles.eventBoxTotal}>{currency(event.total)}</Text>
+                </View>
+                <View style={styles.eventPillsRow}>
+                  {event.breakdown.map((b) => (
+                    <View key={b.category} style={styles.eventPill}>
+                      <Text style={styles.eventPillCategory}>{b.category}:</Text>
+                      <Text style={styles.eventPillAmount}>{currency(b.amount)}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            ))}
+
+            {developerData.generalDevTotal > 0 && (
+              <View style={styles.devGeneralRow}>
+                <Text style={styles.devGeneralLabel}>General Tech & Tools</Text>
+                <Text style={styles.devGeneralAmount}>{currency(developerData.generalDevTotal)}</Text>
+              </View>
+            )}
+          </View>
+        ) : (
+          <View style={styles.devCardEmpty}>
+            <View style={styles.devIconWrapEmpty}>
+              <Feather name="terminal" size={22} color="#6366F1" />
+            </View>
+            <Text style={styles.devCardEmptyTitle}>Track your Dev Journey</Text>
+            <Text style={styles.devCardEmptyText}>
+              Tag entries with "Developer" or an event like #DevFest to see unified event costs here.
+            </Text>
+          </View>
+        )}
+
+        {/* RECENT ACTIVITY */}
         <View style={styles.sectionHeading}>
           <View><Text style={styles.sectionKicker}>RECENT ACTIVITY</Text><Text style={styles.sectionTitle}>Latest expenses</Text></View>
           <Text style={styles.sectionCount}>{expenses.length}</Text>
@@ -300,8 +533,27 @@ export default function HomeScreen() {
             const meta = getCategory(expense.category);
             return (
               <View key={expense.id} style={[styles.expenseRow, index < recent.length - 1 && styles.expenseRowBorder]}>
-                <View style={[styles.expenseIcon, { backgroundColor: `${meta.color}1C` }]}><Feather name={expense.direction === 'received' ? 'arrow-down-left' : meta.icon as keyof typeof Feather.glyphMap} size={18} color={expense.direction === 'received' ? palette.foreground : meta.color} /></View>
-                <View style={styles.expenseMain}><Text style={styles.expenseNote} numberOfLines={1}>{expense.note || expense.category}</Text><Text style={styles.expenseMeta}>{expense.person ? `${expense.person} · ` : ''}{expense.category} · {formatDate(expense.date)}</Text></View>
+                <View style={[styles.expenseIcon, { backgroundColor: `${meta.color}1C` }]}>
+                  <Feather name={expense.direction === 'received' ? 'arrow-down-left' : meta.icon as keyof typeof Feather.glyphMap} size={18} color={expense.direction === 'received' ? palette.foreground : meta.color} />
+                </View>
+                <View style={styles.expenseMain}>
+                  <Text style={styles.expenseNote} numberOfLines={1}>{expense.note || expense.category}</Text>
+                  <View style={styles.badgeRow}>
+                    <Text style={styles.expenseMeta}>
+                      {expense.person ? `${expense.person} · ` : ''}{expense.category} · {formatDate(expense.date)}
+                    </Text>
+                    <View style={[styles.contextBadge, expense.subContext === 'Developer' && styles.contextBadgeDev]}>
+                      <Text style={[styles.contextBadgeText, expense.subContext === 'Developer' && styles.contextBadgeTextDev]}>
+                        {expense.subContext}
+                      </Text>
+                    </View>
+                    {expense.eventTag ? (
+                      <View style={styles.eventBadge}>
+                        <Text style={styles.eventBadgeText}>#{expense.eventTag}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                </View>
                 <Text style={[styles.expenseAmount, expense.direction === 'received' && styles.receivedAmount]}>{expense.direction === 'received' ? '+' : '−'}{currency(expense.amount)}</Text>
               </View>
             );
@@ -317,7 +569,7 @@ export default function HomeScreen() {
         <Feather name="plus" size={22} color={palette.primaryForeground} />
         <Text style={styles.fabText}>Add expense</Text>
       </Pressable>
-      <AddExpenseModal visible={modalVisible} onClose={() => setModalVisible(false)} />
+      <AddExpenseModal visible={modalVisible} onClose={() => setModalVisible(false)} existingEvents={existingEvents} />
     </View>
   );
 }
@@ -354,20 +606,55 @@ const styles = StyleSheet.create({
   donutEyebrow: { color: palette.mutedForeground, fontFamily: 'Inter_600SemiBold', fontSize: 9, letterSpacing: 1.1 },
   donutTotal: { color: palette.foreground, fontFamily: 'Inter_700Bold', fontSize: 24, letterSpacing: -0.8, marginTop: 4 },
   legend: { marginTop: 12, borderTopWidth: 1, borderTopColor: '#ECE8DE', paddingTop: 12, gap: 11 },
-  legendRow: { flexDirection: 'row', alignItems: 'center' },
+  legendHelper: { color: palette.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 11, marginBottom: 4 },
+  categoryItemWrap: { borderBottomWidth: 1, borderBottomColor: '#F5F2EB', paddingBottom: 6 },
+  legendRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
   legendDot: { width: 8, height: 8, borderRadius: 4, marginRight: 9 },
   legendLabel: { color: palette.foreground, fontFamily: 'Inter_500Medium', fontSize: 13, flex: 1 },
   legendAmount: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 13 },
+  subBreakdownBox: { backgroundColor: '#F9F7F1', borderRadius: 10, padding: 10, marginTop: 6, marginLeft: 17, gap: 4 },
+  subBreakdownRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  subBreakdownLabel: { color: palette.mutedForeground, fontFamily: 'Inter_500Medium', fontSize: 12 },
+  subBreakdownAmt: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 12 },
   emptyChart: { alignItems: 'center', borderTopWidth: 1, borderTopColor: '#ECE8DE', marginTop: 12, paddingTop: 14 },
   emptyChartTitle: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 14, marginTop: 8 },
   emptyChartText: { color: palette.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 12, textAlign: 'center', marginTop: 4 },
+  devCard: { backgroundColor: palette.card, borderRadius: 22, padding: 18, marginBottom: 30, borderWidth: 1, borderColor: '#ECE8DE' },
+  devHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
+  devIconWrap: { width: 44, height: 44, borderRadius: 14, backgroundColor: '#6366F118', alignItems: 'center', justifyContent: 'center' },
+  devCardEyebrow: { color: '#6366F1', fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.1 },
+  devCardTotal: { color: palette.foreground, fontFamily: 'Inter_700Bold', fontSize: 24, letterSpacing: -0.8, marginTop: 2 },
+  devBadge: { backgroundColor: '#ECEEFE', paddingHorizontal: 9, paddingVertical: 5, borderRadius: 8 },
+  devBadgeText: { color: '#6366F1', fontFamily: 'Inter_600SemiBold', fontSize: 11 },
+  eventBox: { backgroundColor: '#F8F9FE', borderWidth: 1, borderColor: '#E0E3FA', borderRadius: 14, padding: 12, marginBottom: 10 },
+  eventBoxHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  eventBoxTitle: { color: '#4F46E5', fontFamily: 'Inter_700Bold', fontSize: 14 },
+  eventBoxTotal: { color: palette.foreground, fontFamily: 'Inter_700Bold', fontSize: 14 },
+  eventPillsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  eventPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FFFFFF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: '#E8EAFA' },
+  eventPillCategory: { color: palette.mutedForeground, fontFamily: 'Inter_500Medium', fontSize: 11 },
+  eventPillAmount: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 11 },
+  devGeneralRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 6, borderTopWidth: 1, borderTopColor: '#ECE8DE' },
+  devGeneralLabel: { color: palette.mutedForeground, fontFamily: 'Inter_500Medium', fontSize: 12 },
+  devGeneralAmount: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 12 },
+  devCardEmpty: { backgroundColor: palette.card, borderRadius: 22, padding: 22, alignItems: 'center', marginBottom: 30, borderWidth: 1, borderColor: '#ECE8DE' },
+  devIconWrapEmpty: { width: 44, height: 44, borderRadius: 14, backgroundColor: '#6366F115', alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  devCardEmptyTitle: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 14, marginTop: 4 },
+  devCardEmptyText: { color: palette.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 12, textAlign: 'center', marginTop: 4, paddingHorizontal: 16 },
   recentCard: { backgroundColor: palette.card, borderRadius: 22, paddingHorizontal: 16, borderWidth: 1, borderColor: '#ECE8DE', marginBottom: 8 },
   expenseRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14 },
   expenseRowBorder: { borderBottomWidth: 1, borderBottomColor: '#ECE8DE' },
   expenseIcon: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center', marginRight: 11 },
   expenseMain: { flex: 1, minWidth: 0 },
   expenseNote: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 14 },
-  expenseMeta: { color: palette.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 11, marginTop: 4 },
+  badgeRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 4 },
+  expenseMeta: { color: palette.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 11 },
+  contextBadge: { backgroundColor: '#ECE8DE', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
+  contextBadgeDev: { backgroundColor: '#ECEEFE' },
+  contextBadgeText: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 10 },
+  contextBadgeTextDev: { color: '#6366F1' },
+  eventBadge: { backgroundColor: '#EBF6F0', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
+  eventBadgeText: { color: '#1B6A4B', fontFamily: 'Inter_600SemiBold', fontSize: 10 },
   expenseAmount: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 14, marginLeft: 10 },
   receivedAmount: { color: palette.primary },
   emptyRecent: { paddingVertical: 24, alignItems: 'center' },
@@ -378,29 +665,43 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.82 },
   modalBackdrop: { flex: 1, justifyContent: 'flex-end' },
   modalDismiss: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(25,51,47,0.38)' },
-  sheet: { backgroundColor: palette.background, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 20, paddingTop: 11 },
+  sheet: { backgroundColor: palette.background, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 20, paddingTop: 11, maxHeight: '90%' },
   sheetHandle: { width: 38, height: 4, borderRadius: 2, backgroundColor: '#C8C2B7', alignSelf: 'center', marginBottom: 18 },
-  sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
-  sheetScroll: { paddingBottom: 2 },
+  sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  sheetScroll: { paddingBottom: 20 },
   sheetKicker: { color: palette.primary, fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.4 },
   sheetTitle: { color: palette.foreground, fontFamily: 'Inter_700Bold', fontSize: 26, letterSpacing: -0.7, marginTop: 4 },
   closeButton: { width: 38, height: 38, backgroundColor: palette.card, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   fieldLabel: { color: palette.mutedForeground, fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.2, marginBottom: 8 },
   optional: { color: '#A4AAA4', fontFamily: 'Inter_500Medium', letterSpacing: 0.8 },
-  amountInputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: palette.card, borderWidth: 1, borderColor: palette.input, borderRadius: 16, paddingHorizontal: 16, marginBottom: 20 },
+  amountInputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: palette.card, borderWidth: 1, borderColor: palette.input, borderRadius: 16, paddingHorizontal: 16, marginBottom: 16 },
   currencyPrefix: { color: palette.primary, fontFamily: 'Inter_700Bold', fontSize: 25, marginRight: 5 },
   amountInput: { flex: 1, color: palette.foreground, fontFamily: 'Inter_700Bold', fontSize: 29, paddingVertical: 14 },
-  flowToggle: { flexDirection: 'row', backgroundColor: palette.muted, borderRadius: 14, padding: 4, marginBottom: 20 },
+  flowToggle: { flexDirection: 'row', backgroundColor: palette.muted, borderRadius: 14, padding: 4, marginBottom: 16 },
   flowOption: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: 11, paddingVertical: 11 },
   flowOptionSelected: { backgroundColor: palette.primary },
   flowText: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 13 },
   flowTextSelected: { color: palette.primaryForeground },
-  categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 },
+  contextToggle: { flexDirection: 'row', backgroundColor: palette.muted, borderRadius: 14, padding: 4, marginBottom: 16 },
+  contextOption: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderRadius: 11, paddingVertical: 10 },
+  contextOptionSelected: { backgroundColor: palette.primary },
+  contextText: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 12 },
+  contextTextSelected: { color: palette.primaryForeground },
+  eventInputBox: { backgroundColor: '#F8F9FE', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#E0E3FA', marginBottom: 16 },
+  eventInputHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
+  eventFieldLabel: { color: '#4F46E5', fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.1 },
+  tagChipsScroll: { marginTop: 4 },
+  tagChipsContent: { flexDirection: 'row', gap: 6 },
+  tagChip: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#D7DAF8', paddingHorizontal: 9, paddingVertical: 5, borderRadius: 8 },
+  tagChipSelected: { backgroundColor: '#6366F1', borderColor: '#6366F1' },
+  tagChipText: { color: '#6366F1', fontFamily: 'Inter_600SemiBold', fontSize: 11 },
+  tagChipTextSelected: { color: '#FFFFFF' },
+  categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
   categoryOption: { flexDirection: 'row', alignItems: 'center', borderRadius: 12, paddingHorizontal: 11, paddingVertical: 10, backgroundColor: palette.card, borderWidth: 1, borderColor: '#E8E3D9' },
   categoryOptionText: { color: palette.foreground, fontFamily: 'Inter_500Medium', fontSize: 12, marginLeft: 6 },
   categoryOptionTextSelected: { color: '#FFFDF8', fontFamily: 'Inter_600SemiBold' },
-  noteInput: { backgroundColor: palette.card, borderWidth: 1, borderColor: palette.input, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 13, color: palette.foreground, fontFamily: 'Inter_400Regular', fontSize: 14, marginBottom: 9 },
+  noteInput: { backgroundColor: palette.card, borderWidth: 1, borderColor: palette.input, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 13, color: palette.foreground, fontFamily: 'Inter_400Regular', fontSize: 14, marginBottom: 14 },
   errorText: { color: palette.destructive, fontFamily: 'Inter_500Medium', fontSize: 12, marginBottom: 9 },
-  saveButton: { height: 52, borderRadius: 16, backgroundColor: palette.foreground, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, marginTop: 8 },
+  saveButton: { height: 52, borderRadius: 16, backgroundColor: palette.foreground, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, marginTop: 4, marginBottom: 20 },
   saveButtonText: { color: '#FFFDF8', fontFamily: 'Inter_600SemiBold', fontSize: 15 },
 });

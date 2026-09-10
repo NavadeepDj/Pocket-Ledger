@@ -3,10 +3,20 @@ import * as SQLite from 'expo-sqlite';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Platform } from 'react-native';
 
+export type SubContext = 'Personal' | 'Developer' | 'Office';
+
+export const SUB_CONTEXTS: { key: SubContext; label: string; icon: string }[] = [
+  { key: 'Personal', label: 'Personal', icon: 'user' },
+  { key: 'Developer', label: 'Developer', icon: 'code' },
+  { key: 'Office', label: 'Office', icon: 'briefcase' },
+];
+
 export type Expense = {
   id: string;
   amount: number;
   category: string;
+  subContext: SubContext;
+  eventTag: string;
   note: string;
   date: string;
   direction: 'spent' | 'received';
@@ -16,6 +26,7 @@ export type Expense = {
 export const CATEGORIES = [
   { key: 'Food', label: 'Food', icon: 'coffee', color: '#F06F58' },
   { key: 'Transport', label: 'Transport', icon: 'navigation', color: '#7A8FE8' },
+  { key: 'Developer', label: 'Developer', icon: 'terminal', color: '#6366F1' },
   { key: 'Home', label: 'Home', icon: 'home', color: '#E4A94F' },
   { key: 'Shopping', label: 'Shopping', icon: 'shopping-bag', color: '#A17BD8' },
   { key: 'Health', label: 'Health', icon: 'heart', color: '#56A887' },
@@ -38,7 +49,9 @@ function getDatabase() {
         note TEXT NOT NULL,
         date TEXT NOT NULL,
         direction TEXT NOT NULL DEFAULT 'spent',
-        person TEXT NOT NULL DEFAULT ''
+        person TEXT NOT NULL DEFAULT '',
+        sub_context TEXT NOT NULL DEFAULT 'Personal',
+        event_tag TEXT NOT NULL DEFAULT ''
       );
     `);
     try {
@@ -51,16 +64,48 @@ function getDatabase() {
     } catch {
       // The column already exists on upgraded databases.
     }
+    try {
+      database.execSync("ALTER TABLE expenses ADD COLUMN sub_context TEXT NOT NULL DEFAULT 'Personal'");
+    } catch {
+      // The column already exists on upgraded databases.
+    }
+    try {
+      database.execSync("ALTER TABLE expenses ADD COLUMN event_tag TEXT NOT NULL DEFAULT ''");
+    } catch {
+      // The column already exists on upgraded databases.
+    }
   }
   return database;
 }
+
+type DbExpenseRow = {
+  id: string;
+  amount: number | string;
+  category: string;
+  note: string;
+  date: string;
+  direction?: 'spent' | 'received';
+  person?: string;
+  sub_context?: SubContext;
+  event_tag?: string;
+};
 
 async function readExpenses(): Promise<Expense[]> {
   const db = getDatabase();
   if (db) {
     return db
-      .getAllSync<Expense>('SELECT id, amount, category, note, date, direction, person FROM expenses ORDER BY date DESC')
-      .map((item) => ({ ...item, amount: Number(item.amount), direction: item.direction ?? 'spent', person: item.person ?? '' }));
+      .getAllSync<DbExpenseRow>('SELECT id, amount, category, note, date, direction, person, sub_context, event_tag FROM expenses ORDER BY date DESC')
+      .map((item) => ({
+        id: item.id,
+        amount: Number(item.amount),
+        category: item.category,
+        note: item.note,
+        date: item.date,
+        direction: item.direction ?? 'spent',
+        person: item.person ?? '',
+        subContext: (item.sub_context as SubContext) || 'Personal',
+        eventTag: item.event_tag ?? '',
+      }));
   }
 
   const stored = await AsyncStorage.getItem(STORAGE_KEY);
@@ -69,6 +114,8 @@ async function readExpenses(): Promise<Expense[]> {
         id: item.id ?? '',
         amount: Number(item.amount ?? 0),
         category: item.category ?? 'Other',
+        subContext: (item.subContext as SubContext) || 'Personal',
+        eventTag: item.eventTag ?? '',
         note: item.note ?? 'Expense',
         date: item.date ?? new Date().toISOString(),
         direction: item.direction ?? 'spent',
@@ -83,10 +130,21 @@ async function writeWebExpenses(expenses: Expense[]) {
   }
 }
 
+export type AddExpenseInput = {
+  amount: number;
+  category: string;
+  note: string;
+  direction: 'spent' | 'received';
+  person: string;
+  subContext?: SubContext;
+  eventTag?: string;
+  date?: string;
+};
+
 type ExpenseContextValue = {
   expenses: Expense[];
   loading: boolean;
-  addExpense: (input: Omit<Expense, 'id' | 'date'> & { date?: string }) => Promise<void>;
+  addExpense: (input: AddExpenseInput) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
   reload: () => Promise<void>;
 };
@@ -110,11 +168,13 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     void reload();
   }, [reload]);
 
-  const addExpense = useCallback(async (input: Omit<Expense, 'id' | 'date'> & { date?: string }) => {
+  const addExpense = useCallback(async (input: AddExpenseInput) => {
     const expense: Expense = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       amount: Number(input.amount),
       category: input.category,
+      subContext: input.subContext ?? 'Personal',
+      eventTag: (input.eventTag ?? '').trim(),
       note: input.note.trim(),
       date: input.date ?? new Date().toISOString(),
       direction: input.direction,
@@ -123,7 +183,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     const db = getDatabase();
     if (db) {
       db.runSync(
-        'INSERT INTO expenses (id, amount, category, note, date, direction, person) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO expenses (id, amount, category, note, date, direction, person, sub_context, event_tag) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         expense.id,
         expense.amount,
         expense.category,
@@ -131,6 +191,8 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         expense.date,
         expense.direction,
         expense.person,
+        expense.subContext,
+        expense.eventTag,
       );
     }
     setExpenses((current) => [expense, ...current]);

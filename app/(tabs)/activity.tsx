@@ -1,10 +1,21 @@
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import React, { useMemo, useState } from 'react';
-import { Alert, FlatList, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  Alert,
+  FlatList,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import colors from '@/constants/colors';
 import { CategoryItem, Expense, useExpenses } from '@/context/ExpenseContext';
+import { EditExpenseModal } from '@/components/EditExpenseModal';
 
 const palette = colors.light;
 const currency = (amount: number) =>
@@ -16,60 +27,106 @@ function formatDate(date: string) {
 
 function ExpenseItem({
   expense,
+  onEdit,
   onDelete,
   onSelectEvent,
   getCategoryInfo,
 }: {
   expense: Expense;
+  onEdit: () => void;
   onDelete: () => void;
   onSelectEvent: (event: string) => void;
   getCategoryInfo: (cat: string) => CategoryItem;
 }) {
   const category = getCategoryInfo(expense.category);
+
   const remove = () => {
     if (Platform.OS === 'web') {
-      onDelete();
+      if (window.confirm(`Delete ${expense.note || expense.category} (${currency(expense.amount)})?`)) {
+        onDelete();
+      }
       return;
     }
-    Alert.alert('Delete expense?', 'This entry will be removed from your ledger.', [
+    Alert.alert('Delete expense?', `Remove ${expense.note || expense.category} (${currency(expense.amount)}) from your ledger?`, [
       { text: 'Keep it', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: onDelete },
     ]);
   };
 
   return (
-    <Pressable testID={`expense-${expense.id}`} onLongPress={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).then(remove)} style={({ pressed }) => [styles.item, pressed && styles.itemPressed]}>
+    <Pressable
+      testID={`expense-${expense.id}`}
+      onPress={onEdit}
+      onLongPress={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).then(remove)}
+      style={({ pressed }) => [styles.item, pressed && styles.itemPressed]}
+    >
       <View style={[styles.icon, { backgroundColor: `${category.color}1C` }]}>
         <Feather
           name={(category.icon as keyof typeof Feather.glyphMap) || 'tag'}
-          size={19}
+          size={18}
           color={category.color}
         />
       </View>
+
       <View style={styles.itemMain}>
-        <Text style={styles.note} numberOfLines={1}>{expense.note || expense.category}</Text>
+        <Text style={styles.note} numberOfLines={1}>
+          {expense.note || (expense.direction === 'received' ? 'Money received' : expense.category)}
+        </Text>
         <View style={styles.badgeRow}>
           <Text style={styles.meta}>
-            {expense.person ? `${expense.person} · ` : ''}{expense.direction === 'received' ? 'Received' : expense.category} · {formatDate(expense.date)}
+            {expense.person ? `${expense.person} · ` : ''}
+            {expense.direction === 'received' ? 'Received' : expense.category} · {formatDate(expense.date)}
           </Text>
+
           <View style={[styles.contextBadge, expense.subContext === 'Developer' && styles.contextBadgeDev]}>
             <Text style={[styles.contextBadgeText, expense.subContext === 'Developer' && styles.contextBadgeTextDev]}>
               {expense.subContext}
             </Text>
           </View>
+
           {expense.eventTag ? (
-            <Pressable onPress={() => onSelectEvent(expense.eventTag)} hitSlop={6} style={styles.eventBadge}>
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                onSelectEvent(expense.eventTag);
+              }}
+              hitSlop={6}
+              style={styles.eventBadge}
+            >
               <Text style={styles.eventBadgeText}>#{expense.eventTag}</Text>
             </Pressable>
           ) : null}
         </View>
       </View>
+
       <View style={styles.amountWrap}>
         <Text style={[styles.amount, expense.direction === 'received' && styles.receivedAmount]}>
           {expense.direction === 'received' ? '+' : '−'}{currency(expense.amount)}
         </Text>
-        <Pressable testID={`delete-${expense.id}`} onPress={remove} hitSlop={10} style={styles.deleteButton}>
-          <Feather name="more-horizontal" size={18} color={palette.mutedForeground} />
+      </View>
+
+      {/* QUICK ACTIONS ON ROW */}
+      <View style={styles.rowActions}>
+        <Pressable
+          onPress={(e) => {
+            e.stopPropagation();
+            onEdit();
+          }}
+          hitSlop={8}
+          style={styles.actionBtn}
+        >
+          <Feather name="edit-2" size={14} color={palette.mutedForeground} />
+        </Pressable>
+        <Pressable
+          testID={`delete-${expense.id}`}
+          onPress={(e) => {
+            e.stopPropagation();
+            remove();
+          }}
+          hitSlop={8}
+          style={styles.actionBtn}
+        >
+          <Feather name="trash-2" size={14} color={palette.destructive} />
         </Pressable>
       </View>
     </Pressable>
@@ -81,6 +138,7 @@ export default function ActivityScreen() {
   const { expenses, subContexts, loading, reload, deleteExpense, getCategoryInfo } = useExpenses();
   const [filterContext, setFilterContext] = useState<string>('All');
   const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
   const filteredExpenses = useMemo(() => {
     return expenses.filter((item) => {
@@ -96,6 +154,10 @@ export default function ActivityScreen() {
     return ['All', ...subContexts.map((s) => s.key)];
   }, [subContexts]);
 
+  const existingEvents = useMemo(() => {
+    return Array.from(new Set(expenses.map((e) => e.eventTag.trim()).filter(Boolean)));
+  }, [expenses]);
+
   return (
     <View style={styles.screen}>
       <FlatList
@@ -104,12 +166,16 @@ export default function ActivityScreen() {
         renderItem={({ item }) => (
           <ExpenseItem
             expense={item}
+            onEdit={() => setEditingExpense(item)}
             onDelete={() => void deleteExpense(item.id)}
             onSelectEvent={(tag) => setSelectedEvent(tag)}
             getCategoryInfo={getCategoryInfo}
           />
         )}
-        contentContainerStyle={[styles.content, { paddingTop: insets.top + 20, paddingBottom: Math.max(insets.bottom, 24) + 84 }]}
+        contentContainerStyle={[
+          styles.content,
+          { paddingTop: insets.top + 20, paddingBottom: Math.max(insets.bottom, 24) + 84 },
+        ]}
         showsVerticalScrollIndicator={false}
         scrollEnabled={filteredExpenses.length > 0}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={() => void reload()} tintColor={palette.primary} />}
@@ -122,7 +188,11 @@ export default function ActivityScreen() {
             <View style={styles.summary}>
               <View>
                 <Text style={styles.summaryLabel}>
-                  {selectedEvent ? `TOTAL FOR #${selectedEvent.toUpperCase()}` : filterContext !== 'All' ? `TOTAL FOR ${filterContext.toUpperCase()}` : 'TOTAL TRACKED'}
+                  {selectedEvent
+                    ? `TOTAL FOR #${selectedEvent.toUpperCase()}`
+                    : filterContext !== 'All'
+                    ? `TOTAL FOR ${filterContext.toUpperCase()}`
+                    : 'TOTAL TRACKED'}
                 </Text>
                 <Text style={styles.summaryAmount}>{currency(total)}</Text>
               </View>
@@ -165,7 +235,9 @@ export default function ActivityScreen() {
             )}
 
             {filteredExpenses.length > 0 ? (
-              <Text style={styles.hint}>Amounts in coral are money received</Text>
+              <View style={styles.hintRow}>
+                <Text style={styles.hint}>Amounts in coral are money received · Tap any entry to edit</Text>
+              </View>
             ) : null}
           </View>
         }
@@ -183,6 +255,16 @@ export default function ActivityScreen() {
           </View>
         }
       />
+
+      {/* EDIT MODAL */}
+      {editingExpense && (
+        <EditExpenseModal
+          expense={editingExpense}
+          visible={!!editingExpense}
+          onClose={() => setEditingExpense(null)}
+          existingEvents={existingEvents}
+        />
+      )}
     </View>
   );
 }
@@ -197,8 +279,8 @@ const styles = StyleSheet.create({
   summaryLabel: { color: '#94B1A5', fontFamily: 'Inter_600SemiBold', fontSize: 10, letterSpacing: 1.1 },
   summaryAmount: { color: '#FFFDF8', fontFamily: 'Inter_700Bold', fontSize: 30, letterSpacing: -1, marginTop: 7 },
   summaryIcon: { width: 44, height: 44, borderRadius: 15, backgroundColor: palette.primary, alignItems: 'center', justifyContent: 'center' },
-  filterPills: { flexDirection: 'row', gap: 7, marginTop: 16 },
-  filterPill: { flex: 1, paddingVertical: 8, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: palette.card, borderWidth: 1, borderColor: '#ECE8DE' },
+  filterPills: { flexDirection: 'row', gap: 7, marginTop: 4 },
+  filterPill: { paddingVertical: 8, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: palette.card, borderWidth: 1, borderColor: '#ECE8DE' },
   filterPillActive: { backgroundColor: palette.primary, borderColor: palette.primary },
   filterPillText: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 12 },
   filterPillTextActive: { color: palette.primaryForeground },
@@ -207,10 +289,11 @@ const styles = StyleSheet.create({
   activeEventTagChip: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#FFFFFF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: '#C7D2FE' },
   activeEventTagText: { color: '#4F46E5', fontFamily: 'Inter_700Bold', fontSize: 12 },
   activeEventTagClose: { padding: 2 },
-  hint: { color: palette.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 12, marginTop: 12 },
+  hintRow: { marginTop: 12 },
+  hint: { color: palette.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 11 },
   item: { backgroundColor: palette.card, borderRadius: 18, padding: 14, marginBottom: 10, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#ECE8DE' },
   itemPressed: { opacity: 0.78 },
-  icon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  icon: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
   itemMain: { flex: 1, minWidth: 0 },
   note: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 14 },
   badgeRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 4 },
@@ -221,10 +304,11 @@ const styles = StyleSheet.create({
   contextBadgeTextDev: { color: '#6366F1' },
   eventBadge: { backgroundColor: '#EBF6F0', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
   eventBadgeText: { color: '#1B6A4B', fontFamily: 'Inter_600SemiBold', fontSize: 10 },
-  amountWrap: { alignItems: 'flex-end', marginLeft: 10 },
+  amountWrap: { alignItems: 'flex-end', marginLeft: 8, marginRight: 6 },
   amount: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 14 },
   receivedAmount: { color: palette.primary },
-  deleteButton: { marginTop: 3 },
+  rowActions: { flexDirection: 'row', gap: 6, alignItems: 'center' },
+  actionBtn: { width: 28, height: 28, borderRadius: 8, backgroundColor: '#F8F6F0', alignItems: 'center', justifyContent: 'center' },
   empty: { alignItems: 'center', paddingHorizontal: 30, paddingTop: 55 },
   emptyIcon: { width: 58, height: 58, borderRadius: 20, backgroundColor: '#F9DED7', alignItems: 'center', justifyContent: 'center' },
   emptyTitle: { color: palette.foreground, fontFamily: 'Inter_700Bold', fontSize: 18, marginTop: 16 },

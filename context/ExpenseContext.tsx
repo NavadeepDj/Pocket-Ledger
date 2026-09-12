@@ -184,15 +184,30 @@ export type AddExpenseInput = {
   date?: string;
 };
 
+export type UpdateExpenseInput = {
+  id: string;
+  amount?: number;
+  category?: string;
+  note?: string;
+  direction?: 'spent' | 'received';
+  person?: string;
+  subContext?: SubContext;
+  eventTag?: string;
+  date?: string;
+};
+
 type ExpenseContextValue = {
   expenses: Expense[];
   categories: CategoryItem[];
   subContexts: SubContextItem[];
   loading: boolean;
   addExpense: (input: AddExpenseInput) => Promise<void>;
+  updateExpense: (input: UpdateExpenseInput) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
   addCategory: (item: CategoryItem) => Promise<void>;
+  deleteCategory: (key: string) => Promise<void>;
   addSubContext: (item: SubContextItem) => Promise<void>;
+  deleteSubContext: (key: string) => Promise<void>;
   reload: () => Promise<void>;
   getCategoryInfo: (key: string) => CategoryItem;
 };
@@ -267,6 +282,44 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     [expenses],
   );
 
+  const updateExpense = useCallback(
+    async (input: UpdateExpenseInput) => {
+      const existing = expenses.find((e) => e.id === input.id);
+      if (!existing) return;
+      const updated: Expense = {
+        ...existing,
+        ...(input.amount !== undefined ? { amount: Number(input.amount) } : {}),
+        ...(input.category !== undefined ? { category: input.category } : {}),
+        ...(input.note !== undefined ? { note: input.note.trim() } : {}),
+        ...(input.direction !== undefined ? { direction: input.direction } : {}),
+        ...(input.person !== undefined ? { person: input.person.trim() } : {}),
+        ...(input.subContext !== undefined ? { subContext: input.subContext } : {}),
+        ...(input.eventTag !== undefined ? { eventTag: input.eventTag.trim() } : {}),
+        ...(input.date !== undefined ? { date: input.date } : {}),
+      };
+
+      const db = getDatabase();
+      if (db) {
+        db.runSync(
+          'UPDATE expenses SET amount = ?, category = ?, note = ?, date = ?, direction = ?, person = ?, sub_context = ?, event_tag = ? WHERE id = ?',
+          updated.amount,
+          updated.category,
+          updated.note,
+          updated.date,
+          updated.direction,
+          updated.person,
+          updated.subContext,
+          updated.eventTag,
+          updated.id,
+        );
+      }
+      const next = expenses.map((e) => (e.id === input.id ? updated : e));
+      setExpenses(next);
+      await writeWebExpenses(next);
+    },
+    [expenses],
+  );
+
   const deleteExpense = useCallback(
     async (id: string) => {
       const db = getDatabase();
@@ -299,6 +352,21 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     [customCategories],
   );
 
+  const deleteCategory = useCallback(
+    async (key: string) => {
+      const db = getDatabase();
+      if (db) {
+        db.runSync('DELETE FROM custom_categories WHERE key = ?', key);
+      }
+      const updated = customCategories.filter((c) => c.key !== key);
+      setCustomCategories(updated);
+      if (Platform.OS === 'web') {
+        await AsyncStorage.setItem(CUSTOM_CAT_KEY, JSON.stringify(updated));
+      }
+    },
+    [customCategories],
+  );
+
   const addSubContext = useCallback(
     async (item: SubContextItem) => {
       const db = getDatabase();
@@ -311,6 +379,21 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         );
       }
       const updated = [...customSubContexts.filter((c) => c.key !== item.key), item];
+      setCustomSubContexts(updated);
+      if (Platform.OS === 'web') {
+        await AsyncStorage.setItem(CUSTOM_CTX_KEY, JSON.stringify(updated));
+      }
+    },
+    [customSubContexts],
+  );
+
+  const deleteSubContext = useCallback(
+    async (key: string) => {
+      const db = getDatabase();
+      if (db) {
+        db.runSync('DELETE FROM custom_sub_contexts WHERE key = ?', key);
+      }
+      const updated = customSubContexts.filter((c) => c.key !== key);
       setCustomSubContexts(updated);
       if (Platform.OS === 'web') {
         await AsyncStorage.setItem(CUSTOM_CTX_KEY, JSON.stringify(updated));
@@ -334,9 +417,12 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       subContexts,
       loading,
       addExpense,
+      updateExpense,
       deleteExpense,
       addCategory,
+      deleteCategory,
       addSubContext,
+      deleteSubContext,
       reload,
       getCategoryInfo,
     }),
@@ -346,9 +432,12 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       subContexts,
       loading,
       addExpense,
+      updateExpense,
       deleteExpense,
       addCategory,
+      deleteCategory,
       addSubContext,
+      deleteSubContext,
       reload,
       getCategoryInfo,
     ],

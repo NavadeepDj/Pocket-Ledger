@@ -1,9 +1,24 @@
 import { Feather } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import React, { useMemo, useState } from 'react';
-import { FlatList, Modal, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import {
+  Alert,
+  FlatList,
+  Modal,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import colors from '@/constants/colors';
 import { Expense, useExpenses } from '@/context/ExpenseContext';
+import { EditExpenseModal } from '@/components/EditExpenseModal';
 
 const palette = colors.light;
 const currency = (amount: number) =>
@@ -27,50 +42,372 @@ function balanceCopy(balance: number) {
   return { label: 'settled', color: palette.mutedForeground };
 }
 
-function PersonDetail({ ledger, onClose }: { ledger: PersonLedger; onClose: () => void }) {
+function RepaymentModal({
+  visible,
+  personName,
+  defaultAmount,
+  defaultCategory,
+  onClose,
+  onConfirm,
+}: {
+  visible: boolean;
+  personName: string;
+  defaultAmount: number;
+  defaultCategory: string;
+  onClose: () => void;
+  onConfirm: (amount: number, note: string, category: string) => Promise<void>;
+}) {
+  const [amount, setAmount] = useState('');
+  const [note, setNote] = useState('');
+  const [error, setError] = useState('');
+
+  React.useEffect(() => {
+    if (visible) {
+      setAmount(defaultAmount > 0 ? defaultAmount.toString() : '');
+      setNote(`Repaid for ${defaultCategory}`);
+      setError('');
+    }
+  }, [visible, defaultAmount, defaultCategory]);
+
+  const submit = async () => {
+    const numeric = Number(amount.replace(',', '.'));
+    if (!numeric || numeric <= 0) {
+      setError('Enter a valid repayment amount');
+      return;
+    }
+    await onConfirm(numeric, note.trim() || `Repaid for ${defaultCategory}`, defaultCategory);
+    onClose();
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior="padding" style={styles.modalBackdropCenter}>
+        <Pressable style={styles.dialogBackdrop} onPress={onClose} />
+        <View style={styles.dialogCard}>
+          <View style={styles.dialogHeader}>
+            <View>
+              <Text style={styles.dialogKicker}>RECORD REPAYMENT</Text>
+              <Text style={styles.dialogTitle}>From {personName}</Text>
+            </View>
+            <Pressable onPress={onClose} style={styles.closeCircle}>
+              <Feather name="x" size={18} color={palette.foreground} />
+            </Pressable>
+          </View>
+
+          <Text style={styles.dialogDescription}>
+            This reduces the amount {personName} owes you and logs a repayment in your ledger.
+          </Text>
+
+          <Text style={styles.dialogFieldLabel}>REPAYMENT AMOUNT</Text>
+          <View style={styles.dialogAmountInputWrap}>
+            <Text style={styles.dialogCurrencyPrefix}>₹</Text>
+            <TextInput
+              autoFocus
+              value={amount}
+              onChangeText={(t) => {
+                setAmount(t.replace(/[^0-9.,]/g, ''));
+                setError('');
+              }}
+              keyboardType="decimal-pad"
+              placeholder="0"
+              placeholderTextColor={palette.mutedForeground}
+              style={styles.dialogAmountInput}
+            />
+          </View>
+
+          {defaultAmount > 0 && defaultAmount !== Number(amount) && (
+            <Pressable
+              onPress={() => setAmount(defaultAmount.toString())}
+              style={styles.fullBalanceChip}
+            >
+              <Text style={styles.fullBalanceChipText}>
+                Settle full balance ({currency(defaultAmount)})
+              </Text>
+            </Pressable>
+          )}
+
+          <View style={styles.preservedCategoryRow}>
+            <Text style={styles.preservedCategoryLabel}>Category: </Text>
+            <View style={styles.preservedCategoryBadge}>
+              <Feather name="tag" size={11} color={palette.foreground} />
+              <Text style={styles.preservedCategoryText}>{defaultCategory}</Text>
+            </View>
+          </View>
+
+          <Text style={styles.dialogFieldLabel}>NOTE / DETAILS</Text>
+          <TextInput
+            value={note}
+            onChangeText={setNote}
+            placeholder="e.g. Cash repayment, GPay"
+            placeholderTextColor={palette.mutedForeground}
+            style={styles.dialogInput}
+          />
+
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+          <Pressable onPress={submit} style={styles.dialogPrimaryBtn}>
+            <Feather name="check-circle" size={18} color={palette.primaryForeground} />
+            <Text style={styles.dialogPrimaryBtnText}>Record Repayment</Text>
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+function PersonDetail({
+  ledger,
+  onClose,
+}: {
+  ledger: PersonLedger;
+  onClose: () => void;
+}) {
+  const { addExpense, deleteExpense, getCategoryInfo } = useExpenses();
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+  const [showRepaymentModal, setShowRepaymentModal] = useState(false);
+
+  // Preserve the category of what you paid for this person
+  const preservedCategory = useMemo(() => {
+    const spentTransaction = ledger.transactions.find((t) => t.direction === 'spent' && t.category);
+    return spentTransaction?.category || ledger.transactions[0]?.category || 'Food';
+  }, [ledger.transactions]);
+
   const balance = balanceCopy(ledger.balance);
+
+  const handleRepayment = async (amount: number, note: string, category: string) => {
+    await addExpense({
+      amount,
+      note,
+      category,
+      direction: 'received',
+      person: ledger.name,
+      subContext: 'Personal',
+      date: new Date().toISOString(),
+    });
+    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  };
+
+  const handlePaidMore = async () => {
+    await addExpense({
+      amount: 0,
+      note: `Payment for ${ledger.name}`,
+      category: preservedCategory,
+      direction: 'spent',
+      person: ledger.name,
+      subContext: 'Personal',
+    });
+  };
+
+  const confirmDeleteTransaction = (item: Expense) => {
+    const doDelete = async () => {
+      await deleteExpense(item.id);
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    };
+
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Delete ${item.note || 'this transaction'} (${currency(item.amount)})?`)) {
+        void doDelete();
+      }
+      return;
+    }
+
+    Alert.alert('Delete transaction?', `Remove this ${item.direction === 'received' ? 'repayment' : 'expense'} (${currency(item.amount)}) from ${ledger.name}'s history?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => void doDelete() },
+    ]);
+  };
+
   return (
     <Modal visible animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.modalBackdrop}>
         <Pressable style={styles.modalDismiss} onPress={onClose} />
         <View style={styles.detailSheet}>
           <View style={styles.sheetHandle} />
+
+          {/* HEADER */}
           <View style={styles.detailHeader}>
-            <View style={styles.avatarLarge}><Text style={styles.avatarText}>{ledger.name.slice(0, 1).toUpperCase()}</Text></View>
-            <View style={styles.detailHeaderText}><Text style={styles.detailKicker}>PERSONAL LEDGER</Text><Text style={styles.detailTitle}>{ledger.name}</Text></View>
-            <Pressable testID="close-person-ledger" onPress={onClose} style={styles.closeButton}><Feather name="x" size={19} color={palette.foreground} /></Pressable>
+            <View style={styles.avatarLarge}>
+              <Text style={styles.avatarText}>{ledger.name.slice(0, 1).toUpperCase()}</Text>
+            </View>
+            <View style={styles.detailHeaderText}>
+              <Text style={styles.detailKicker}>PERSONAL LEDGER</Text>
+              <Text style={styles.detailTitle}>{ledger.name}</Text>
+            </View>
+            <Pressable testID="close-person-ledger" onPress={onClose} style={styles.closeButton}>
+              <Feather name="x" size={19} color={palette.foreground} />
+            </Pressable>
           </View>
+
+          {/* BALANCE CARD */}
           <View style={styles.balanceCard}>
             <Text style={styles.balanceLabel}>CURRENT BALANCE</Text>
             <Text style={[styles.balanceAmount, { color: balance.color }]}>{currency(ledger.balance)}</Text>
-            <Text style={[styles.balanceDirection, { color: balance.color }]}>{balance.label}</Text>
+            <View style={[styles.balanceBadge, { backgroundColor: `${balance.color}15` }]}>
+              <Text style={[styles.balanceDirection, { color: balance.color }]}>
+                {ledger.balance > 0 ? `${ledger.name} owes you` : ledger.balance < 0 ? `You owe ${ledger.name}` : 'All settled up'}
+              </Text>
+            </View>
           </View>
+
+          {/* QUICK ACTIONS: REPAID ME / QUICK PAYMENT */}
+          <View style={styles.quickActionRow}>
+            <Pressable
+              onPress={() => setShowRepaymentModal(true)}
+              style={({ pressed }) => [styles.quickActionBtn, styles.repaymentBtn, pressed && styles.pressed]}
+            >
+              <Feather name="arrow-down-left" size={16} color="#166534" />
+              <Text style={styles.repaymentBtnText}>
+                {ledger.balance > 0 ? 'Repaid me' : 'Record received'}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => {
+                // Open edit modal directly with a new prefilled payment template
+                setEditingExpense({
+                  id: '',
+                  amount: 0,
+                  category: preservedCategory,
+                  note: `Paid for ${ledger.name}`,
+                  date: new Date().toISOString(),
+                  direction: 'spent',
+                  person: ledger.name,
+                  subContext: 'Personal',
+                  eventTag: '',
+                });
+              }}
+              style={({ pressed }) => [styles.quickActionBtn, styles.paidMoreBtn, pressed && styles.pressed]}
+            >
+              <Feather name="arrow-up-right" size={16} color={palette.primary} />
+              <Text style={styles.paidMoreBtnText}>I paid {ledger.name}</Text>
+            </Pressable>
+          </View>
+
+          {/* STATS OVERVIEW */}
           <View style={styles.detailStats}>
-            <View><Text style={styles.detailStatLabel}>YOU PAID</Text><Text style={styles.detailStatValue}>{currency(ledger.paid)}</Text></View>
+            <View style={styles.statCol}>
+              <Text style={styles.detailStatLabel}>YOU PAID</Text>
+              <Text style={styles.detailStatValue}>{currency(ledger.paid)}</Text>
+            </View>
             <View style={styles.detailStatDivider} />
-            <View><Text style={styles.detailStatLabel}>YOU RECEIVED</Text><Text style={styles.detailStatValue}>{currency(ledger.received)}</Text></View>
+            <View style={styles.statCol}>
+              <Text style={styles.detailStatLabel}>YOU RECEIVED</Text>
+              <Text style={styles.detailStatValue}>{currency(ledger.received)}</Text>
+            </View>
+            <View style={styles.detailStatDivider} />
+            <View style={styles.statCol}>
+              <Text style={styles.detailStatLabel}>ENTRIES</Text>
+              <Text style={styles.detailStatValue}>{ledger.transactions.length}</Text>
+            </View>
           </View>
-          <Text style={styles.historyLabel}>TRANSACTION HISTORY</Text>
+
+          {/* TRANSACTION HISTORY HEADER */}
+          <View style={styles.historyHeaderRow}>
+            <Text style={styles.historyLabel}>TRANSACTION HISTORY</Text>
+            <Text style={styles.historyHelper}>Tap any item to edit</Text>
+          </View>
+
+          {/* TRANSACTION HISTORY LIST */}
           <FlatList
             data={ledger.transactions}
             keyExtractor={(item) => item.id}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.historyList}
-            renderItem={({ item }) => (
-              <View style={styles.historyRow}>
-                <View style={[styles.historyIcon, { backgroundColor: item.direction === 'received' ? '#E6F1EA' : '#F9DED7' }]}>
-                  <Feather name={item.direction === 'received' ? 'arrow-down-left' : 'arrow-up-right'} size={17} color={item.direction === 'received' ? palette.foreground : palette.primary} />
-                </View>
-                <View style={styles.historyMain}>
-                  <Text style={styles.historyTitle}>{item.direction === 'received' ? 'You received' : 'You paid'}</Text>
-                  <Text style={styles.historyMeta}>{item.note || 'Transaction'} · {formatDate(item.date)}</Text>
-                </View>
-                <Text style={[styles.historyAmount, item.direction === 'received' && styles.receivedAmount]}>{item.direction === 'received' ? '+' : '−'}{currency(item.amount)}</Text>
-              </View>
-            )}
+            renderItem={({ item }) => {
+              const catMeta = getCategoryInfo(item.category);
+              return (
+                <Pressable
+                  onPress={() => setEditingExpense(item)}
+                  style={({ pressed }) => [styles.historyRow, pressed && styles.pressed]}
+                >
+                  <View
+                    style={[
+                      styles.historyIcon,
+                      { backgroundColor: item.direction === 'received' ? '#E6F1EA' : '#F9DED7' },
+                    ]}
+                  >
+                    <Feather
+                      name={item.direction === 'received' ? 'arrow-down-left' : 'arrow-up-right'}
+                      size={16}
+                      color={item.direction === 'received' ? '#166534' : palette.primary}
+                    />
+                  </View>
+
+                  <View style={styles.historyMain}>
+                    <Text style={styles.historyTitle} numberOfLines={1}>
+                      {item.note || (item.direction === 'received' ? 'Money received' : item.category)}
+                    </Text>
+                    <View style={styles.historyMetaRow}>
+                      <Text style={styles.historyMetaText}>
+                        {item.category} · {formatDate(item.date)}
+                      </Text>
+                      {item.subContext && item.subContext !== 'Personal' && (
+                        <View style={styles.historySubBadge}>
+                          <Text style={styles.historySubBadgeText}>{item.subContext}</Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+
+                  <View style={styles.historyAmountWrap}>
+                    <Text
+                      style={[
+                        styles.historyAmount,
+                        item.direction === 'received' && styles.receivedAmount,
+                      ]}
+                    >
+                      {item.direction === 'received' ? '+' : '−'}{currency(item.amount)}
+                    </Text>
+                  </View>
+
+                  {/* GRANULAR ROW ACTIONS: EDIT & DELETE */}
+                  <View style={styles.rowActions}>
+                    <Pressable
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        setEditingExpense(item);
+                      }}
+                      hitSlop={8}
+                      style={styles.actionIconBtn}
+                    >
+                      <Feather name="edit-2" size={14} color={palette.mutedForeground} />
+                    </Pressable>
+                    <Pressable
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        confirmDeleteTransaction(item);
+                      }}
+                      hitSlop={8}
+                      style={styles.actionIconBtn}
+                    >
+                      <Feather name="trash-2" size={14} color={palette.destructive} />
+                    </Pressable>
+                  </View>
+                </Pressable>
+              );
+            }}
           />
         </View>
       </View>
+
+      {/* QUICK REPAYMENT MODAL */}
+      <RepaymentModal
+        visible={showRepaymentModal}
+        personName={ledger.name}
+        defaultAmount={Math.max(ledger.balance, 0)}
+        defaultCategory={preservedCategory}
+        onClose={() => setShowRepaymentModal(false)}
+        onConfirm={handleRepayment}
+      />
+
+      {/* DIRECT FULL EDIT EXPENSE MODAL */}
+      {editingExpense && editingExpense.id ? (
+        <EditExpenseModal
+          expense={editingExpense}
+          visible={!!editingExpense}
+          onClose={() => setEditingExpense(null)}
+        />
+      ) : null}
     </Modal>
   );
 }
@@ -78,10 +415,11 @@ function PersonDetail({ ledger, onClose }: { ledger: PersonLedger; onClose: () =
 export default function PeopleScreen() {
   const insets = useSafeAreaInsets();
   const { expenses, loading, reload } = useExpenses();
-  const [selectedPerson, setSelectedPerson] = useState<PersonLedger | null>(null);
+  const [selectedPersonName, setSelectedPersonName] = useState<string | null>(null);
+
   const ledgers = useMemo(() => {
     const map = new Map<string, PersonLedger>();
-    expenses.filter((expense) => expense.person.trim()).forEach((expense) => {
+    expenses.filter((expense) => expense.person && expense.person.trim()).forEach((expense) => {
       const name = expense.person.trim();
       const existing = map.get(name) ?? { name, transactions: [], paid: 0, received: 0, balance: 0 };
       existing.transactions.push(expense);
@@ -93,6 +431,19 @@ export default function PeopleScreen() {
     return Array.from(map.values()).sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance));
   }, [expenses]);
 
+  const activeLedger = useMemo(() => {
+    if (!selectedPersonName) return null;
+    return ledgers.find((l) => l.name.toLowerCase() === selectedPersonName.toLowerCase()) ?? null;
+  }, [ledgers, selectedPersonName]);
+
+  const totalReceivable = useMemo(() => {
+    return ledgers.filter((l) => l.balance > 0).reduce((sum, l) => sum + l.balance, 0);
+  }, [ledgers]);
+
+  const totalPayable = useMemo(() => {
+    return ledgers.filter((l) => l.balance < 0).reduce((sum, l) => sum + Math.abs(l.balance), 0);
+  }, [ledgers]);
+
   return (
     <View style={styles.screen}>
       <FlatList
@@ -101,15 +452,36 @@ export default function PeopleScreen() {
         renderItem={({ item }) => {
           const balance = balanceCopy(item.balance);
           return (
-            <Pressable testID={`person-${item.name}`} onPress={() => setSelectedPerson(item)} style={({ pressed }) => [styles.personRow, pressed && styles.pressed]}>
-              <View style={styles.avatar}><Text style={styles.avatarText}>{item.name.slice(0, 1).toUpperCase()}</Text></View>
-              <View style={styles.personMain}><Text style={styles.personName}>{item.name}</Text><Text style={styles.personMeta}>{item.transactions.length} {item.transactions.length === 1 ? 'transaction' : 'transactions'}</Text></View>
-              <View style={styles.personBalance}><Text style={[styles.personAmount, { color: balance.color }]}>{currency(item.balance)}</Text><Text style={[styles.personDirection, { color: balance.color }]}>{balance.label}</Text></View>
+            <Pressable
+              testID={`person-${item.name}`}
+              onPress={() => setSelectedPersonName(item.name)}
+              style={({ pressed }) => [styles.personRow, pressed && styles.pressed]}
+            >
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>{item.name.slice(0, 1).toUpperCase()}</Text>
+              </View>
+              <View style={styles.personMain}>
+                <Text style={styles.personName}>{item.name}</Text>
+                <Text style={styles.personMeta}>
+                  {item.transactions.length} {item.transactions.length === 1 ? 'transaction' : 'transactions'}
+                </Text>
+              </View>
+              <View style={styles.personBalance}>
+                <Text style={[styles.personAmount, { color: balance.color }]}>
+                  {currency(item.balance)}
+                </Text>
+                <Text style={[styles.personDirection, { color: balance.color }]}>
+                  {balance.label}
+                </Text>
+              </View>
               <Feather name="chevron-right" size={17} color={palette.mutedForeground} />
             </Pressable>
           );
         }}
-        contentContainerStyle={[styles.content, { paddingTop: insets.top + 20, paddingBottom: Math.max(insets.bottom, 24) + 84 }]}
+        contentContainerStyle={[
+          styles.content,
+          { paddingTop: insets.top + 20, paddingBottom: Math.max(insets.bottom, 24) + 84 },
+        ]}
         showsVerticalScrollIndicator={false}
         scrollEnabled={ledgers.length > 0}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={() => void reload()} tintColor={palette.primary} />}
@@ -117,19 +489,50 @@ export default function PeopleScreen() {
           <View style={styles.header}>
             <Text style={styles.kicker}>MONEY BETWEEN YOU</Text>
             <Text style={styles.title}>People</Text>
-            <Text style={styles.subtitle}>Keep track of who owes who, without doing the math.</Text>
-            <View style={styles.rule}><View style={styles.ruleAccent} /><View style={styles.ruleRest} /></View>
+            <Text style={styles.subtitle}>
+              Keep track of who owes who, record repayments, and settle up cleanly.
+            </Text>
+
+            {/* SUMMARY OVERVIEW PILL */}
+            {ledgers.length > 0 && (
+              <View style={styles.overviewCard}>
+                <View style={styles.overviewItem}>
+                  <Text style={styles.overviewLabel}>TOTAL YOU ARE OWED</Text>
+                  <Text style={[styles.overviewValue, { color: palette.primary }]}>{currency(totalReceivable)}</Text>
+                </View>
+                <View style={styles.overviewDivider} />
+                <View style={styles.overviewItem}>
+                  <Text style={styles.overviewLabel}>TOTAL YOU OWE</Text>
+                  <Text style={styles.overviewValue}>{currency(totalPayable)}</Text>
+                </View>
+              </View>
+            )}
+
+            <View style={styles.rule}>
+              <View style={styles.ruleAccent} />
+              <View style={styles.ruleRest} />
+            </View>
           </View>
         }
         ListEmptyComponent={
           <View style={styles.empty}>
-            <View style={styles.emptyIcon}><Feather name="users" size={24} color={palette.primary} /></View>
+            <View style={styles.emptyIcon}>
+              <Feather name="users" size={24} color={palette.primary} />
+            </View>
             <Text style={styles.emptyTitle}>No personal ledgers yet</Text>
-            <Text style={styles.emptyText}>When you add a payment or repayment, add the person’s name and their balance will appear here.</Text>
+            <Text style={styles.emptyText}>
+              When adding an expense, include the person&apos;s name. Their balance and repayment tracker will appear right here.
+            </Text>
           </View>
         }
       />
-      {selectedPerson ? <PersonDetail ledger={selectedPerson} onClose={() => setSelectedPerson(null)} /> : null}
+
+      {activeLedger ? (
+        <PersonDetail
+          ledger={activeLedger}
+          onClose={() => setSelectedPersonName(null)}
+        />
+      ) : null}
     </View>
   );
 }
@@ -140,14 +543,19 @@ const styles = StyleSheet.create({
   header: { marginBottom: 20 },
   kicker: { color: palette.primary, fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.4 },
   title: { color: palette.foreground, fontFamily: 'Inter_700Bold', fontSize: 30, letterSpacing: -0.8, marginTop: 5 },
-  subtitle: { color: palette.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 19, marginTop: 7, maxWidth: 300 },
-  rule: { flexDirection: 'row', height: 3, marginTop: 22, gap: 5 },
+  subtitle: { color: palette.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 19, marginTop: 7, maxWidth: 320 },
+  overviewCard: { backgroundColor: palette.card, borderRadius: 18, padding: 14, marginTop: 16, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#ECE8DE' },
+  overviewItem: { flex: 1, alignItems: 'center' },
+  overviewLabel: { color: palette.mutedForeground, fontFamily: 'Inter_600SemiBold', fontSize: 9, letterSpacing: 1 },
+  overviewValue: { color: palette.foreground, fontFamily: 'Inter_700Bold', fontSize: 18, marginTop: 4 },
+  overviewDivider: { width: 1, height: 26, backgroundColor: '#ECE8DE' },
+  rule: { flexDirection: 'row', height: 3, marginTop: 18, gap: 5 },
   ruleAccent: { width: 42, backgroundColor: palette.primary, borderRadius: 2 },
   ruleRest: { flex: 1, backgroundColor: '#DDD9D0', borderRadius: 2 },
   personRow: { backgroundColor: palette.card, borderRadius: 19, padding: 14, marginBottom: 10, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#ECE8DE' },
   pressed: { opacity: 0.78 },
   avatar: { width: 44, height: 44, borderRadius: 15, backgroundColor: palette.foreground, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-  avatarLarge: { width: 52, height: 52, borderRadius: 18, backgroundColor: palette.primary, alignItems: 'center', justifyContent: 'center' },
+  avatarLarge: { width: 48, height: 48, borderRadius: 16, backgroundColor: palette.primary, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: '#FFFDF8', fontFamily: 'Inter_700Bold', fontSize: 17 },
   personMain: { flex: 1, minWidth: 0 },
   personName: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 15 },
@@ -161,28 +569,66 @@ const styles = StyleSheet.create({
   emptyText: { color: palette.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 13, lineHeight: 19, textAlign: 'center', marginTop: 7 },
   modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(25,51,47,0.38)' },
   modalDismiss: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
-  detailSheet: { maxHeight: '88%', backgroundColor: palette.background, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 20, paddingTop: 11, paddingBottom: 22 },
+  detailSheet: { maxHeight: '90%', backgroundColor: palette.background, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: 20, paddingTop: 11, paddingBottom: 24 },
   sheetHandle: { width: 38, height: 4, borderRadius: 2, backgroundColor: '#C8C2B7', alignSelf: 'center', marginBottom: 19 },
-  detailHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  detailHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 18 },
   detailHeaderText: { flex: 1, marginLeft: 12 },
   detailKicker: { color: palette.primary, fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.3 },
   detailTitle: { color: palette.foreground, fontFamily: 'Inter_700Bold', fontSize: 24, letterSpacing: -0.6, marginTop: 4 },
   closeButton: { width: 38, height: 38, backgroundColor: palette.card, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  balanceCard: { backgroundColor: palette.card, borderRadius: 19, borderWidth: 1, borderColor: '#ECE8DE', padding: 18, alignItems: 'center' },
+  balanceCard: { backgroundColor: palette.card, borderRadius: 20, borderWidth: 1, borderColor: '#ECE8DE', padding: 18, alignItems: 'center' },
   balanceLabel: { color: palette.mutedForeground, fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.1 },
-  balanceAmount: { fontFamily: 'Inter_700Bold', fontSize: 31, letterSpacing: -0.8, marginTop: 7 },
-  balanceDirection: { fontFamily: 'Inter_600SemiBold', fontSize: 13, marginTop: 2 },
-  detailStats: { flexDirection: 'row', paddingVertical: 18, alignItems: 'center' },
+  balanceAmount: { fontFamily: 'Inter_700Bold', fontSize: 32, letterSpacing: -0.8, marginTop: 6 },
+  balanceBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, marginTop: 6 },
+  balanceDirection: { fontFamily: 'Inter_600SemiBold', fontSize: 12 },
+  quickActionRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  quickActionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, borderRadius: 14, borderWidth: 1 },
+  repaymentBtn: { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' },
+  repaymentBtnText: { color: '#166534', fontFamily: 'Inter_600SemiBold', fontSize: 13 },
+  paidMoreBtn: { backgroundColor: '#FFF5F3', borderColor: '#FED7D2' },
+  paidMoreBtnText: { color: palette.primary, fontFamily: 'Inter_600SemiBold', fontSize: 13 },
+  detailStats: { flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 6, alignItems: 'center', marginTop: 10 },
+  statCol: { flex: 1, alignItems: 'center' },
   detailStatLabel: { color: palette.mutedForeground, fontFamily: 'Inter_600SemiBold', fontSize: 9, letterSpacing: 1 },
-  detailStatValue: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 14, marginTop: 5 },
-  detailStatDivider: { width: 1, height: 25, backgroundColor: '#DDD9D0', marginHorizontal: 26 },
-  historyLabel: { color: palette.primary, fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.3, marginBottom: 10 },
-  historyList: { paddingBottom: 8 },
+  detailStatValue: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 13, marginTop: 4 },
+  detailStatDivider: { width: 1, height: 22, backgroundColor: '#DDD9D0' },
+  historyHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 6, marginBottom: 10 },
+  historyLabel: { color: palette.primary, fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.3 },
+  historyHelper: { color: palette.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 11 },
+  historyList: { paddingBottom: 16 },
   historyRow: { backgroundColor: palette.card, borderRadius: 16, borderWidth: 1, borderColor: '#ECE8DE', padding: 12, flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   historyIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginRight: 10 },
   historyMain: { flex: 1, minWidth: 0 },
   historyTitle: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 13 },
-  historyMeta: { color: palette.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 10, marginTop: 4 },
+  historyMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 },
+  historyMetaText: { color: palette.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 11 },
+  historySubBadge: { backgroundColor: '#ECE8DE', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 },
+  historySubBadgeText: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 9 },
+  historyAmountWrap: { alignItems: 'flex-end', marginHorizontal: 8 },
   historyAmount: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 13 },
-  receivedAmount: { color: palette.primary },
+  receivedAmount: { color: '#166534' },
+  rowActions: { flexDirection: 'row', gap: 8, alignItems: 'center', marginLeft: 4 },
+  actionIconBtn: { width: 28, height: 28, borderRadius: 8, backgroundColor: '#F8F6F0', alignItems: 'center', justifyContent: 'center' },
+  modalBackdropCenter: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
+  dialogBackdrop: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(25,51,47,0.48)' },
+  dialogCard: { width: '100%', maxWidth: 360, backgroundColor: palette.background, borderRadius: 24, padding: 20, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 20, elevation: 9 },
+  dialogHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  dialogKicker: { color: '#166534', fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.2 },
+  dialogTitle: { color: palette.foreground, fontFamily: 'Inter_700Bold', fontSize: 20, marginTop: 2 },
+  closeCircle: { width: 32, height: 32, borderRadius: 10, backgroundColor: palette.card, alignItems: 'center', justifyContent: 'center' },
+  dialogDescription: { color: palette.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 12, lineHeight: 17, marginBottom: 14 },
+  dialogFieldLabel: { color: palette.mutedForeground, fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.1, marginBottom: 6 },
+  dialogAmountInputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: palette.card, borderWidth: 1, borderColor: palette.input, borderRadius: 14, paddingHorizontal: 14, marginBottom: 10 },
+  dialogCurrencyPrefix: { color: palette.primary, fontFamily: 'Inter_700Bold', fontSize: 22, marginRight: 6 },
+  dialogAmountInput: { flex: 1, color: palette.foreground, fontFamily: 'Inter_700Bold', fontSize: 24, paddingVertical: 10 },
+  fullBalanceChip: { alignSelf: 'flex-start', backgroundColor: '#E8F5E9', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, marginBottom: 12 },
+  fullBalanceChipText: { color: '#2E7D32', fontFamily: 'Inter_600SemiBold', fontSize: 11 },
+  preservedCategoryRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  preservedCategoryLabel: { color: palette.mutedForeground, fontFamily: 'Inter_500Medium', fontSize: 12 },
+  preservedCategoryBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: palette.card, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: '#ECE8DE' },
+  preservedCategoryText: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 11 },
+  dialogInput: { backgroundColor: palette.card, borderWidth: 1, borderColor: palette.input, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, color: palette.foreground, fontFamily: 'Inter_400Regular', fontSize: 13, marginBottom: 14 },
+  dialogPrimaryBtn: { height: 48, borderRadius: 14, backgroundColor: palette.foreground, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, marginTop: 4 },
+  dialogPrimaryBtnText: { color: '#FFFDF8', fontFamily: 'Inter_600SemiBold', fontSize: 14 },
+  errorText: { color: palette.destructive, fontFamily: 'Inter_500Medium', fontSize: 12, marginBottom: 8 },
 });

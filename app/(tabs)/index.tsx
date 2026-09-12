@@ -19,9 +19,11 @@ import Svg, { Circle } from 'react-native-svg';
 import {
   CategoryItem,
   DEFAULT_CATEGORIES,
+  Expense,
   SubContextItem,
   useExpenses,
 } from '@/context/ExpenseContext';
+import { EditExpenseModal } from '@/components/EditExpenseModal';
 import colors from '@/constants/colors';
 
 const palette = colors.light;
@@ -633,6 +635,7 @@ export default function HomeScreen() {
   const { expenses, loading, getCategoryInfo } = useExpenses();
   const [modalVisible, setModalVisible] = useState(false);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
   const currentMonth = new Date().getMonth();
   const currentYear = new Date().getFullYear();
@@ -877,7 +880,15 @@ export default function HomeScreen() {
           {recent.length > 0 ? recent.map((expense, index) => {
             const meta = getCategoryInfo(expense.category);
             return (
-              <View key={expense.id} style={[styles.expenseRow, index < recent.length - 1 && styles.expenseRowBorder]}>
+              <Pressable
+                key={expense.id}
+                onPress={() => setEditingExpense(expense)}
+                style={({ pressed }) => [
+                  styles.expenseRow,
+                  index < recent.length - 1 && styles.expenseRowBorder,
+                  pressed && styles.pressed,
+                ]}
+              >
                 <View style={[styles.expenseIcon, { backgroundColor: `${meta.color}1C` }]}>
                   <Feather
                     name={(meta.icon as keyof typeof Feather.glyphMap) || (expense.direction === 'received' ? 'arrow-down-left' : 'tag')}
@@ -904,7 +915,7 @@ export default function HomeScreen() {
                   </View>
                 </View>
                 <Text style={[styles.expenseAmount, expense.direction === 'received' && styles.receivedAmount]}>{expense.direction === 'received' ? '+' : '−'}{currency(expense.amount)}</Text>
-              </View>
+              </Pressable>
             );
           }) : (
             <View style={styles.emptyRecent}>
@@ -919,6 +930,14 @@ export default function HomeScreen() {
         <Text style={styles.fabText}>Add expense</Text>
       </Pressable>
       <AddExpenseModal visible={modalVisible} onClose={() => setModalVisible(false)} existingEvents={existingEvents} />
+      {editingExpense && (
+        <EditExpenseModal
+          expense={editingExpense}
+          visible={!!editingExpense}
+          onClose={() => setEditingExpense(null)}
+          existingEvents={existingEvents}
+        />
+      )}
     </View>
   );
 }

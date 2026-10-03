@@ -13,8 +13,9 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { getSphereStyle } from '@/app/(tabs)/index';
 import colors from '@/constants/colors';
-import { CategoryItem, Expense, useExpenses } from '@/context/ExpenseContext';
+import { CategoryItem, Expense, SubContextItem, useExpenses } from '@/context/ExpenseContext';
 import { EditExpenseModal } from '@/components/EditExpenseModal';
 
 const palette = colors.light;
@@ -31,14 +32,20 @@ function ExpenseItem({
   onDelete,
   onSelectEvent,
   getCategoryInfo,
+  getSubContextInfo,
 }: {
   expense: Expense;
   onEdit: () => void;
   onDelete: () => void;
   onSelectEvent: (event: string) => void;
   getCategoryInfo: (cat: string) => CategoryItem;
+  getSubContextInfo: (ctx: string) => SubContextItem;
 }) {
   const category = getCategoryInfo(expense.category);
+  const sphereStyle = getSphereStyle(
+    expense.subContext,
+    getSubContextInfo(expense.subContext).color,
+  );
 
   const remove = () => {
     if (Platform.OS === 'web') {
@@ -78,8 +85,17 @@ function ExpenseItem({
             {expense.direction === 'received' ? 'Received' : expense.category} · {formatDate(expense.date)}
           </Text>
 
-          <View style={[styles.contextBadge, expense.subContext === 'Developer' && styles.contextBadgeDev]}>
-            <Text style={[styles.contextBadgeText, expense.subContext === 'Developer' && styles.contextBadgeTextDev]}>
+          <View
+            style={[
+              styles.contextBadge,
+              {
+                backgroundColor: sphereStyle.bg,
+                borderColor: sphereStyle.border,
+                borderWidth: 1,
+              },
+            ]}
+          >
+            <Text style={[styles.contextBadgeText, { color: sphereStyle.text }]}>
               {expense.subContext}
             </Text>
           </View>
@@ -135,7 +151,7 @@ function ExpenseItem({
 
 export default function ActivityScreen() {
   const insets = useSafeAreaInsets();
-  const { expenses, subContexts, loading, reload, deleteExpense, getCategoryInfo } = useExpenses();
+  const { expenses, subContexts, loading, reload, deleteExpense, getCategoryInfo, getSubContextInfo } = useExpenses();
   const [filterContext, setFilterContext] = useState<string>('All');
   const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
@@ -170,6 +186,7 @@ export default function ActivityScreen() {
             onDelete={() => void deleteExpense(item.id)}
             onSelectEvent={(tag) => setSelectedEvent(tag)}
             getCategoryInfo={getCategoryInfo}
+            getSubContextInfo={getSubContextInfo}
           />
         )}
         contentContainerStyle={[
@@ -206,12 +223,26 @@ export default function ActivityScreen() {
               <View style={styles.filterPills}>
                 {allContextKeys.map((ctx) => {
                   const active = filterContext === ctx;
+                  const isAll = ctx === 'All';
+                  const ctxColor = isAll ? '#0F172A' : getSubContextInfo(ctx).color;
+
                   return (
                     <Pressable
                       key={ctx}
                       onPress={() => setFilterContext(ctx)}
-                      style={[styles.filterPill, active && styles.filterPillActive]}
+                      style={[
+                        styles.filterPill,
+                        active && { backgroundColor: ctxColor, borderColor: ctxColor },
+                      ]}
                     >
+                      {!isAll && (
+                        <View
+                          style={[
+                            styles.filterDot,
+                            { backgroundColor: active ? '#FFFFFF' : ctxColor },
+                          ]}
+                        />
+                      )}
                       <Text style={[styles.filterPillText, active && styles.filterPillTextActive]}>
                         {ctx}
                       </Text>
@@ -280,10 +311,11 @@ const styles = StyleSheet.create({
   summaryAmount: { color: '#FFFDF8', fontFamily: 'Inter_700Bold', fontSize: 30, letterSpacing: -1, marginTop: 7 },
   summaryIcon: { width: 44, height: 44, borderRadius: 15, backgroundColor: palette.primary, alignItems: 'center', justifyContent: 'center' },
   filterPills: { flexDirection: 'row', gap: 7, marginTop: 4 },
-  filterPill: { paddingVertical: 8, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: palette.card, borderWidth: 1, borderColor: '#ECE8DE' },
+  filterPill: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 13, borderRadius: 10, backgroundColor: palette.card, borderWidth: 1, borderColor: '#ECE8DE' },
   filterPillActive: { backgroundColor: palette.primary, borderColor: palette.primary },
+  filterDot: { width: 6, height: 6, borderRadius: 3 },
   filterPillText: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 12 },
-  filterPillTextActive: { color: palette.primaryForeground },
+  filterPillTextActive: { color: '#FFFFFF', fontFamily: 'Inter_700Bold' },
   activeEventFilterRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, backgroundColor: '#EEF0FD', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 },
   activeEventFilterLabel: { color: '#4F46E5', fontFamily: 'Inter_600SemiBold', fontSize: 11 },
   activeEventTagChip: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: '#FFFFFF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: '#C7D2FE' },

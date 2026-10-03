@@ -128,8 +128,17 @@ export function generateMonthlyReportHtml(data: MonthlyReportData): string {
     (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
   );
 
+function getPdfSphereStyle(name: string) {
+  const s = (name || 'Personal').toLowerCase();
+  if (s === 'personal') return { text: '#059669', bg: '#ECFDF5', border: '#A7F3D0', color: '#10B981' };
+  if (s === 'developer') return { text: '#4F46E5', bg: '#EEF2FF', border: '#C7D2FE', color: '#6366F1' };
+  if (s === 'office') return { text: '#D97706', bg: '#FFFBEB', border: '#FDE68A', color: '#F59E0B' };
+  return { text: '#7C3AED', bg: '#F5F3FF', border: '#DDD6FE', color: '#8B5CF6' };
+}
+
   const tableRowsHtml = sortedExpenses.map((exp, idx) => {
     const cat = getCategoryInfo(exp.category);
+    const sphereStyle = getPdfSphereStyle(exp.subContext || 'Personal');
     const dateFormatted = new Date(exp.date).toLocaleDateString('en-IN', {
       day: '2-digit',
       month: 'short',
@@ -157,7 +166,9 @@ export function generateMonthlyReportHtml(data: MonthlyReportData): string {
           </span>
         </td>
         <td class="cell-sphere">
-          <span class="sphere-pill">${escapeHtml(exp.subContext || 'Personal')}</span>
+          <span class="sphere-pill" style="background: ${sphereStyle.bg}; color: ${sphereStyle.text}; border: 1px solid ${sphereStyle.border};">
+            ${escapeHtml(exp.subContext || 'Personal')}
+          </span>
         </td>
         <td class="cell-type">${directionBadge}</td>
         <td class="cell-amount ${amountClass}">
@@ -675,13 +686,16 @@ export function generateMonthlyReportHtml(data: MonthlyReportData): string {
 
     <!-- LIFE SPHERES BREAKDOWN -->
     <div class="spheres-grid">
-      ${sphereBreakdown.map((sphere) => `
-        <div class="sphere-card">
-          <div class="sphere-title">${escapeHtml(sphere.name)} Sphere</div>
-          <div class="sphere-amt">${formatCurrency(sphere.spent)}</div>
-          <div class="sphere-pct">${sphere.percentage.toFixed(1)}% of total outflows (${sphere.count} transactions)</div>
-        </div>
-      `).join('')}
+      ${sphereBreakdown.map((sphere) => {
+        const sStyle = getPdfSphereStyle(sphere.name);
+        return `
+          <div class="sphere-card" style="border-left: 4px solid ${sStyle.color}; background: ${sStyle.bg};">
+            <div class="sphere-title" style="color: ${sStyle.text};">${escapeHtml(sphere.name)} Sphere</div>
+            <div class="sphere-amt">${formatCurrency(sphere.spent)}</div>
+            <div class="sphere-pct">${sphere.percentage.toFixed(1)}% of total outflows (${sphere.count} transactions)</div>
+          </div>
+        `;
+      }).join('')}
     </div>
 
     <!-- EVENT JOURNEYS SPOTLIGHT (IF ANY) -->

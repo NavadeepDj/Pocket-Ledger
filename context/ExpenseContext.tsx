@@ -9,12 +9,18 @@ export type SubContextItem = {
   key: string;
   label: string;
   icon: string;
+  color?: string;
 };
 
 export const DEFAULT_SUB_CONTEXTS: SubContextItem[] = [
-  { key: 'Personal', label: 'Personal', icon: 'user' },
-  { key: 'Developer', label: 'Developer', icon: 'code' },
-  { key: 'Office', label: 'Office', icon: 'briefcase' },
+  { key: 'Personal', label: 'Personal', icon: 'user', color: '#10B981' },
+  { key: 'Developer', label: 'Developer', icon: 'code', color: '#6366F1' },
+  { key: 'Office', label: 'Office', icon: 'briefcase', color: '#F59E0B' },
+];
+
+export const SUB_CONTEXT_PALETTE = [
+  '#10B981', '#6366F1', '#F59E0B', '#06B6D4',
+  '#EC4899', '#8B5CF6', '#14B8A6', '#F43F5E',
 ];
 
 export const SUB_CONTEXTS = DEFAULT_SUB_CONTEXTS;
@@ -82,9 +88,13 @@ function getDatabase() {
       CREATE TABLE IF NOT EXISTS custom_sub_contexts (
         key TEXT PRIMARY KEY NOT NULL,
         label TEXT NOT NULL,
-        icon TEXT NOT NULL
+        icon TEXT NOT NULL,
+        color TEXT NOT NULL DEFAULT '#6366F1'
       );
     `);
+    try {
+      database.execSync("ALTER TABLE custom_sub_contexts ADD COLUMN color TEXT NOT NULL DEFAULT '#6366F1'");
+    } catch {}
     try {
       database.execSync("ALTER TABLE expenses ADD COLUMN direction TEXT NOT NULL DEFAULT 'spent'");
     } catch {}
@@ -161,10 +171,26 @@ async function readCustomCategories(): Promise<CategoryItem[]> {
 async function readCustomSubContexts(): Promise<SubContextItem[]> {
   const db = getDatabase();
   if (db) {
-    return db.getAllSync<SubContextItem>('SELECT key, label, icon FROM custom_sub_contexts');
+    type DbCtxRow = { key: string; label: string; icon: string; color?: string };
+    const rows = db.getAllSync<DbCtxRow>('SELECT key, label, icon, color FROM custom_sub_contexts');
+    return rows.map((r, i) => ({
+      key: r.key,
+      label: r.label,
+      icon: r.icon || 'folder',
+      color: r.color || SUB_CONTEXT_PALETTE[(i + 3) % SUB_CONTEXT_PALETTE.length],
+    }));
   }
   const stored = await AsyncStorage.getItem(CUSTOM_CTX_KEY);
-  return stored ? JSON.parse(stored) : [];
+  if (stored) {
+    const parsed: Partial<SubContextItem>[] = JSON.parse(stored);
+    return parsed.map((r, i) => ({
+      key: r.key ?? '',
+      label: r.label ?? r.key ?? '',
+      icon: r.icon ?? 'folder',
+      color: r.color || SUB_CONTEXT_PALETTE[(i + 3) % SUB_CONTEXT_PALETTE.length],
+    }));
+  }
+  return [];
 }
 
 async function writeWebExpenses(expenses: Expense[]) {
@@ -210,6 +236,7 @@ type ExpenseContextValue = {
   deleteSubContext: (key: string) => Promise<void>;
   reload: () => Promise<void>;
   getCategoryInfo: (key: string) => CategoryItem;
+  getSubContextInfo: (key: string) => SubContextItem & { color: string };
 };
 
 const ExpenseContext = createContext<ExpenseContextValue | null>(null);
@@ -370,15 +397,18 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
   const addSubContext = useCallback(
     async (item: SubContextItem) => {
       const db = getDatabase();
+      const color = item.color || SUB_CONTEXT_PALETTE[customSubContexts.length % SUB_CONTEXT_PALETTE.length];
+      const itemWithColor = { ...item, color };
       if (db) {
         db.runSync(
-          'INSERT OR REPLACE INTO custom_sub_contexts (key, label, icon) VALUES (?, ?, ?)',
-          item.key,
-          item.label,
-          item.icon,
+          'INSERT OR REPLACE INTO custom_sub_contexts (key, label, icon, color) VALUES (?, ?, ?, ?)',
+          itemWithColor.key,
+          itemWithColor.label,
+          itemWithColor.icon,
+          itemWithColor.color,
         );
       }
-      const updated = [...customSubContexts.filter((c) => c.key !== item.key), item];
+      const updated = [...customSubContexts.filter((c) => c.key !== item.key), itemWithColor];
       setCustomSubContexts(updated);
       if (Platform.OS === 'web') {
         await AsyncStorage.setItem(CUSTOM_CTX_KEY, JSON.stringify(updated));
@@ -410,6 +440,15 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     [categories],
   );
 
+  const getSubContextInfo = useCallback(
+    (key: string): SubContextItem & { color: string } => {
+      const found = subContexts.find((s) => s.key.toLowerCase() === key.toLowerCase());
+      if (found) return { ...found, color: found.color || '#6366F1' };
+      return { key, label: key, icon: 'folder', color: '#6366F1' };
+    },
+    [subContexts],
+  );
+
   const value = useMemo(
     () => ({
       expenses,
@@ -425,6 +464,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       deleteSubContext,
       reload,
       getCategoryInfo,
+      getSubContextInfo,
     }),
     [
       expenses,
@@ -440,6 +480,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       deleteSubContext,
       reload,
       getCategoryInfo,
+      getSubContextInfo,
     ],
   );
 

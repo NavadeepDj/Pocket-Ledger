@@ -6,6 +6,7 @@ import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   Modal,
   Platform,
   Pressable,
@@ -16,6 +17,8 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Circle } from 'react-native-svg';
+import { getSphereStyle } from '@/app/(tabs)/index';
 import colors from '@/constants/colors';
 import { useExpenses } from '@/context/ExpenseContext';
 import {
@@ -42,7 +45,7 @@ const MONTH_NAMES = [
 
 export default function ReportsScreen() {
   const insets = useSafeAreaInsets();
-  const { expenses, getCategoryInfo } = useExpenses();
+  const { expenses, getCategoryInfo, getSubContextInfo } = useExpenses();
 
   const now = new Date();
   const [selectedYear, setSelectedYear] = useState<number>(now.getFullYear());
@@ -50,6 +53,10 @@ export default function ReportsScreen() {
   const [userName, setUserName] = useState<string>('');
   const [showConfigModal, setShowConfigModal] = useState<boolean>(false);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
+
+  // Interactive Chart State in Reports
+  const [reportChartTab, setReportChartTab] = useState<'category' | 'sphere'>('category');
+  const [selectedReportKey, setSelectedReportKey] = useState<string | null>(null);
 
   // Month navigation helpers
   const prevMonth = () => {
@@ -111,6 +118,29 @@ export default function ReportsScreen() {
       })
       .sort((a, b) => b.amount - a.amount);
   }, [spentItems, totalSpent, getCategoryInfo]);
+
+  // Sphere breakdown for preview
+  const sphereSummary = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const item of spentItems) {
+      const s = item.subContext || 'Personal';
+      map.set(s, (map.get(s) || 0) + item.amount);
+    }
+    return Array.from(map.entries())
+      .map(([key, amount]) => {
+        const info = getSubContextInfo(key);
+        const pct = totalSpent > 0 ? (amount / totalSpent) * 100 : 0;
+        return {
+          key,
+          label: info.label,
+          color: info.color,
+          icon: info.icon,
+          amount,
+          pct,
+        };
+      })
+      .sort((a, b) => b.amount - a.amount);
+  }, [spentItems, totalSpent, getSubContextInfo]);
 
   // Build statement metadata
   const statementId = useMemo(() => {
@@ -323,37 +353,213 @@ export default function ReportsScreen() {
           </Pressable>
         </View>
 
-        {/* CATEGORY VISUAL DISTRIBUTION PREVIEW */}
-        {categorySummary.length > 0 ? (
+        {/* INTERACTIVE VISUAL DISTRIBUTION PREVIEW */}
+        {totalSpent > 0 && (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>CATEGORY BREAKDOWN</Text>
-              <Text style={styles.sectionSub}>Included in PDF visualization</Text>
+              <Text style={styles.sectionTitle}>VISUAL DISTRIBUTION</Text>
+              <Text style={styles.sectionSub}>Included in PDF statement</Text>
             </View>
-            <View style={styles.categoryCardList}>
-              {categorySummary.map((cat) => (
-                <View key={cat.key} style={styles.categoryPreviewRow}>
-                  <View style={styles.catMeta}>
-                    <View style={[styles.catColorDot, { backgroundColor: cat.color }]} />
-                    <Text style={styles.catLabel}>{cat.label}</Text>
+
+            <View style={styles.reportChartCard}>
+              {/* SEGMENTED TAB SELECTOR */}
+              <View style={styles.reportTabRow}>
+                <Pressable
+                  onPress={() => {
+                    void Haptics.selectionAsync();
+                    setReportChartTab('category');
+                    setSelectedReportKey(null);
+                  }}
+                  style={[
+                    styles.reportTabBtn,
+                    reportChartTab === 'category' && styles.reportTabBtnActive,
+                  ]}
+                >
+                  <Feather
+                    name="pie-chart"
+                    size={12}
+                    color={reportChartTab === 'category' ? '#FFFFFF' : palette.mutedForeground}
+                  />
+                  <Text
+                    style={[
+                      styles.reportTabText,
+                      reportChartTab === 'category' && styles.reportTabTextActive,
+                    ]}
+                  >
+                    Categories
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    void Haptics.selectionAsync();
+                    setReportChartTab('sphere');
+                    setSelectedReportKey(null);
+                  }}
+                  style={[
+                    styles.reportTabBtn,
+                    reportChartTab === 'sphere' && styles.reportTabBtnActive,
+                  ]}
+                >
+                  <Feather
+                    name="compass"
+                    size={12}
+                    color={reportChartTab === 'sphere' ? '#FFFFFF' : palette.mutedForeground}
+                  />
+                  <Text
+                    style={[
+                      styles.reportTabText,
+                      reportChartTab === 'sphere' && styles.reportTabTextActive,
+                    ]}
+                  >
+                    Life Spheres
+                  </Text>
+                </Pressable>
+              </View>
+
+              {/* INTERACTIVE SVG DONUT */}
+              {(() => {
+                const chartItems = reportChartTab === 'category' ? categorySummary : sphereSummary;
+                const chartSize = Math.min(Dimensions.get('window').width - 72, 220);
+                const strokeWidth = 20;
+                const radius = (chartSize - strokeWidth - 6) / 2;
+                const circumference = 2 * Math.PI * radius;
+                let offset = 0;
+
+                const activeItem = chartItems.find((i) => i.key === selectedReportKey);
+
+                return (
+                  <View style={{ alignItems: 'center', marginVertical: 8 }}>
+                    <Svg width={chartSize} height={chartSize} viewBox={`0 0 ${chartSize} ${chartSize}`}>
+                      <Circle
+                        cx={chartSize / 2}
+                        cy={chartSize / 2}
+                        r={radius}
+                        stroke={palette.muted}
+                        strokeWidth={strokeWidth}
+                        fill="none"
+                      />
+                      {chartItems.map((item) => {
+                        const isSelected = selectedReportKey === item.key;
+                        const segment = (item.amount / totalSpent) * circumference;
+                        const currentOffset = offset;
+                        offset += segment;
+
+                        return (
+                          <Circle
+                            key={item.key}
+                            cx={chartSize / 2}
+                            cy={chartSize / 2}
+                            r={isSelected ? radius + 1.5 : radius}
+                            stroke={item.color}
+                            strokeWidth={isSelected ? strokeWidth + 6 : strokeWidth}
+                            fill="none"
+                            strokeDasharray={`${segment} ${circumference - segment}`}
+                            strokeDashoffset={-currentOffset}
+                            strokeLinecap="round"
+                            rotation="-90"
+                            origin={`${chartSize / 2}, ${chartSize / 2}`}
+                            opacity={selectedReportKey ? (isSelected ? 1 : 0.32) : 1}
+                            onPress={() => {
+                              void Haptics.selectionAsync();
+                              setSelectedReportKey(isSelected ? null : item.key);
+                            }}
+                          />
+                        );
+                      })}
+                    </Svg>
+
+                    <Pressable
+                      onPress={() => {
+                        if (selectedReportKey) {
+                          void Haptics.selectionAsync();
+                          setSelectedReportKey(null);
+                        }
+                      }}
+                      style={styles.donutCenterWrap}
+                      hitSlop={12}
+                    >
+                      {activeItem ? (
+                        <View style={{ alignItems: 'center', maxWidth: 130 }}>
+                          <View
+                            style={[
+                              styles.reportCenterBadge,
+                              { backgroundColor: `${activeItem.color}1E` },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.reportCenterBadgeText,
+                                { color: activeItem.color },
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {activeItem.label.toUpperCase()}
+                            </Text>
+                          </View>
+                          <Text style={styles.reportCenterAmount}>
+                            {formatCurrency(activeItem.amount)}
+                          </Text>
+                          <Text style={styles.reportCenterPct}>
+                            {activeItem.pct.toFixed(1)}% of total
+                          </Text>
+                          <Text style={styles.reportCenterReset}>Tap to reset</Text>
+                        </View>
+                      ) : (
+                        <View style={{ alignItems: 'center' }}>
+                          <Text style={styles.reportCenterEyebrow}>TOTAL SPENT</Text>
+                          <Text style={styles.reportCenterAmount}>{formatCurrency(totalSpent)}</Text>
+                          <Text style={styles.reportCenterHint}>Tap slice to inspect</Text>
+                        </View>
+                      )}
+                    </Pressable>
                   </View>
-                  <View style={styles.catAmountWrap}>
-                    <Text style={styles.catAmount}>{formatCurrency(cat.amount)}</Text>
-                    <Text style={styles.catPct}>{cat.pct.toFixed(1)}%</Text>
-                  </View>
-                  <View style={styles.barBackground}>
-                    <View
+                );
+              })()}
+
+              {/* PROGRESS BARS LIST */}
+              <View style={styles.reportBarsList}>
+                {(reportChartTab === 'category' ? categorySummary : sphereSummary).map((item) => {
+                  const isSelected = selectedReportKey === item.key;
+                  return (
+                    <Pressable
+                      key={item.key}
+                      onPress={() => {
+                        void Haptics.selectionAsync();
+                        setSelectedReportKey(isSelected ? null : item.key);
+                      }}
                       style={[
-                        styles.barFill,
-                        { width: `${cat.pct}%`, backgroundColor: cat.color },
+                        styles.categoryPreviewRow,
+                        isSelected && { backgroundColor: `${item.color}14`, padding: 6, borderRadius: 8 },
                       ]}
-                    />
-                  </View>
-                </View>
-              ))}
+                    >
+                      <View style={styles.catMeta}>
+                        <View style={[styles.catColorDot, { backgroundColor: item.color }]} />
+                        <Text style={[styles.catLabel, isSelected && { fontFamily: 'Inter_700Bold' }]}>
+                          {item.label}
+                        </Text>
+                      </View>
+                      <View style={styles.catAmountWrap}>
+                        <Text style={[styles.catAmount, isSelected && { color: item.color }]}>
+                          {formatCurrency(item.amount)}
+                        </Text>
+                        <Text style={styles.catPct}>{item.pct.toFixed(1)}%</Text>
+                      </View>
+                      <View style={styles.barBackground}>
+                        <View
+                          style={[
+                            styles.barFill,
+                            { width: `${item.pct}%`, backgroundColor: item.color },
+                          ]}
+                        />
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
             </View>
           </View>
-        ) : null}
+        )}
 
         {/* RECENT MONTH TRANSACTIONS PREVIEW */}
         <View style={styles.section}>
@@ -386,13 +592,43 @@ export default function ReportsScreen() {
                         <Text style={styles.ledgerNote} numberOfLines={1}>
                           {item.note || item.category}
                         </Text>
-                        <Text style={styles.ledgerMeta}>
-                          {new Date(item.date).toLocaleDateString('en-IN', {
-                            day: 'numeric',
-                            month: 'short',
-                          })}{' '}
-                          &bull; {cat.label} &bull; {item.subContext}
-                        </Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
+                          <Text style={styles.ledgerMeta}>
+                            {new Date(item.date).toLocaleDateString('en-IN', {
+                              day: 'numeric',
+                              month: 'short',
+                            })}{' '}
+                            &bull; {cat.label}
+                          </Text>
+                          {(() => {
+                            const sphereStyle = getSphereStyle(
+                              item.subContext,
+                              getSubContextInfo(item.subContext).color,
+                            );
+                            return (
+                              <View
+                                style={{
+                                  backgroundColor: sphereStyle.bg,
+                                  borderColor: sphereStyle.border,
+                                  borderWidth: 1,
+                                  paddingHorizontal: 6,
+                                  paddingVertical: 1,
+                                  borderRadius: 4,
+                                }}
+                              >
+                                <Text
+                                  style={{
+                                    fontSize: 9,
+                                    fontFamily: 'Inter_600SemiBold',
+                                    color: sphereStyle.text,
+                                  }}
+                                >
+                                  {item.subContext}
+                                </Text>
+                              </View>
+                            );
+                          })()}
+                        </View>
                       </View>
                     </View>
                     <Text
@@ -877,5 +1113,98 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 14,
+  },
+  reportChartCard: {
+    backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 16,
+    padding: 16,
+  },
+  reportTabRow: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 11,
+    padding: 3,
+    marginBottom: 8,
+  },
+  reportTabBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  reportTabBtnActive: {
+    backgroundColor: '#0F172A',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  reportTabText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#64748B',
+  },
+  reportTabTextActive: {
+    color: '#FFFFFF',
+    fontFamily: 'Inter_700Bold',
+  },
+  donutCenterWrap: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reportCenterBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+    marginBottom: 2,
+  },
+  reportCenterBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Inter_700Bold',
+  },
+  reportCenterAmount: {
+    fontSize: 18,
+    fontFamily: 'Inter_700Bold',
+    color: palette.foreground,
+    letterSpacing: -0.5,
+  },
+  reportCenterPct: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: palette.mutedForeground,
+    marginTop: 1,
+  },
+  reportCenterReset: {
+    fontSize: 9,
+    fontFamily: 'Inter_500Medium',
+    color: '#6366F1',
+    marginTop: 3,
+  },
+  reportCenterEyebrow: {
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    letterSpacing: 0.8,
+    color: palette.mutedForeground,
+  },
+  reportCenterHint: {
+    fontSize: 9,
+    fontFamily: 'Inter_500Medium',
+    color: palette.mutedForeground,
+    marginTop: 2,
+  },
+  reportBarsList: {
+    marginTop: 14,
+    gap: 12,
   },
 });

@@ -274,20 +274,41 @@ function AddSubContextModal({
   );
 }
 
-function DonutChart({
+export function getSphereStyle(sphere: string, customColor?: string) {
+  const s = (sphere || 'Personal').toLowerCase();
+  if (s === 'personal') {
+    return { text: '#059669', bg: '#ECFDF5', border: '#A7F3D0', color: '#10B981' };
+  }
+  if (s === 'developer') {
+    return { text: '#4F46E5', bg: '#EEF2FF', border: '#C7D2FE', color: '#6366F1' };
+  }
+  if (s === 'office') {
+    return { text: '#D97706', bg: '#FFFBEB', border: '#FDE68A', color: '#F59E0B' };
+  }
+  const color = customColor || '#8B5CF6';
+  return { text: color, bg: `${color}18`, border: `${color}40`, color };
+}
+
+function InteractiveDonutChart({
   total,
-  grouped,
-  getCatColor,
+  items,
+  selectedKey,
+  onSelectKey,
+  emptyEyebrow = 'THIS MONTH',
 }: {
   total: number;
-  grouped: { category: string; amount: number }[];
-  getCatColor: (cat: string) => string;
+  items: { key: string; label: string; amount: number; color: string; icon?: string }[];
+  selectedKey: string | null;
+  onSelectKey: (key: string | null) => void;
+  emptyEyebrow?: string;
 }) {
-  const size = Math.min(Dimensions.get('window').width - 48, 228);
+  const size = Math.min(Dimensions.get('window').width - 48, 236);
   const strokeWidth = 22;
-  const radius = (size - strokeWidth) / 2;
+  const radius = (size - strokeWidth - 8) / 2;
   const circumference = 2 * Math.PI * radius;
   let offset = 0;
+
+  const selectedItem = items.find((i) => i.key === selectedKey);
 
   return (
     <View style={styles.donutWrap}>
@@ -301,33 +322,203 @@ function DonutChart({
           fill="none"
         />
         {total > 0 &&
-          grouped.map((item) => {
+          items.map((item) => {
+            const isSelected = selectedKey === item.key;
             const segment = (item.amount / total) * circumference;
-            const color = getCatColor(item.category);
-            const node = (
+            const currentOffset = offset;
+            offset += segment;
+
+            return (
               <Circle
-                key={item.category}
+                key={item.key}
                 cx={size / 2}
                 cy={size / 2}
-                r={radius}
-                stroke={color}
-                strokeWidth={strokeWidth}
+                r={isSelected ? radius + 1.5 : radius}
+                stroke={item.color}
+                strokeWidth={isSelected ? strokeWidth + 7 : strokeWidth}
                 fill="none"
                 strokeDasharray={`${segment} ${circumference - segment}`}
-                strokeDashoffset={-offset}
+                strokeDashoffset={-currentOffset}
                 strokeLinecap="round"
                 rotation="-90"
                 origin={`${size / 2}, ${size / 2}`}
+                opacity={selectedKey ? (isSelected ? 1 : 0.32) : 1}
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  onSelectKey(isSelected ? null : item.key);
+                }}
               />
             );
-            offset += segment;
-            return node;
           })}
       </Svg>
-      <View style={styles.donutCenter}>
-        <Text style={styles.donutEyebrow}>THIS MONTH</Text>
-        <Text style={styles.donutTotal}>{compactCurrency(total)}</Text>
+
+      {/* CENTER MORPHING DISPLAY */}
+      <Pressable
+        onPress={() => {
+          if (selectedKey) {
+            void Haptics.selectionAsync();
+            onSelectKey(null);
+          }
+        }}
+        style={styles.donutCenter}
+        hitSlop={12}
+      >
+        {selectedItem ? (
+          <View style={styles.donutActiveCenter}>
+            <View style={[styles.activeCenterBadge, { backgroundColor: `${selectedItem.color}1E` }]}>
+              <Feather
+                name={(selectedItem.icon as keyof typeof Feather.glyphMap) || 'tag'}
+                size={11}
+                color={selectedItem.color}
+              />
+              <Text
+                style={[styles.activeCenterLabel, { color: selectedItem.color }]}
+                numberOfLines={1}
+              >
+                {selectedItem.label.toUpperCase()}
+              </Text>
+            </View>
+            <Text style={styles.activeCenterAmount}>{compactCurrency(selectedItem.amount)}</Text>
+            <Text style={styles.activeCenterPct}>
+              {((selectedItem.amount / total) * 100).toFixed(1)}% of total
+            </Text>
+            <Text style={styles.activeCenterReset}>Tap to reset</Text>
+          </View>
+        ) : (
+          <View style={{ alignItems: 'center' }}>
+            <Text style={styles.donutEyebrow}>{emptyEyebrow}</Text>
+            <Text style={styles.donutTotal}>{compactCurrency(total)}</Text>
+            <Text style={styles.donutHint}>Tap slice to inspect</Text>
+          </View>
+        )}
+      </Pressable>
+    </View>
+  );
+}
+
+function DailyBarChart({
+  monthExpenses,
+  daysInMonth,
+  selectedDay,
+  onSelectDay,
+}: {
+  monthExpenses: Expense[];
+  daysInMonth: number;
+  selectedDay: number | null;
+  onSelectDay: (day: number | null) => void;
+}) {
+  const dailyData = useMemo(() => {
+    const list: { day: number; amount: number; count: number }[] = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      list.push({ day: d, amount: 0, count: 0 });
+    }
+    for (const exp of monthExpenses) {
+      if (exp.direction === 'spent') {
+        const expDate = new Date(exp.date);
+        const day = expDate.getDate();
+        if (day >= 1 && day <= daysInMonth) {
+          list[day - 1].amount += exp.amount;
+          list[day - 1].count += 1;
+        }
+      }
+    }
+    return list;
+  }, [monthExpenses, daysInMonth]);
+
+  const maxAmount = Math.max(...dailyData.map((d) => d.amount), 100);
+  const totalSpent = dailyData.reduce((acc, d) => acc + d.amount, 0);
+  const activeDaysCount = dailyData.filter((d) => d.amount > 0).length;
+  const dailyAvg = totalSpent / (activeDaysCount || 1);
+
+  const selectedData = selectedDay ? dailyData[selectedDay - 1] : null;
+
+  return (
+    <View style={styles.dailyChartContainer}>
+      {/* HEADER READOUT */}
+      <View style={styles.dailyHeader}>
+        {selectedData ? (
+          <View style={styles.dailyReadoutActive}>
+            <View style={styles.dailyReadoutPill}>
+              <Feather name="calendar" size={12} color="#0F172A" />
+              <Text style={styles.dailyReadoutDay}>Day {selectedData.day}</Text>
+            </View>
+            <Text style={styles.dailyReadoutAmount}>
+              {currency(selectedData.amount)}
+            </Text>
+            <Text style={styles.dailyReadoutSub}>
+              {selectedData.count} {selectedData.count === 1 ? 'expense' : 'expenses'}
+            </Text>
+            <Pressable
+              onPress={() => onSelectDay(null)}
+              hitSlop={8}
+              style={{ marginLeft: 'auto' }}
+            >
+              <Text style={styles.dailyResetLink}>Clear</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <View style={styles.dailyReadoutDefault}>
+            <View>
+              <Text style={styles.dailyMetaLabel}>DAILY AVERAGE</Text>
+              <Text style={styles.dailyMetaVal}>{compactCurrency(dailyAvg)}/day</Text>
+            </View>
+            <View style={styles.dailyMetaRight}>
+              <Text style={styles.dailyHint}>Tap any bar to inspect date</Text>
+            </View>
+          </View>
+        )}
       </View>
+
+      {/* BARS SCROLL */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.barsScrollContent}
+      >
+        {dailyData.map((d) => {
+          const isSelected = selectedDay === d.day;
+          const isToday = new Date().getDate() === d.day;
+          const barHeight = Math.max((d.amount / maxAmount) * 94, d.amount > 0 ? 8 : 3);
+
+          return (
+            <Pressable
+              key={`day-${d.day}`}
+              onPress={() => {
+                void Haptics.selectionAsync();
+                onSelectDay(isSelected ? null : d.day);
+              }}
+              style={styles.barCol}
+              hitSlop={4}
+            >
+              <View style={styles.barTrack}>
+                <View
+                  style={[
+                    styles.barPillar,
+                    {
+                      height: barHeight,
+                      backgroundColor: isSelected
+                        ? '#0F172A'
+                        : d.amount > 0
+                        ? '#6366F1'
+                        : '#E2E8F0',
+                    },
+                    isSelected && styles.barPillarSelected,
+                  ]}
+                />
+              </View>
+              <Text
+                style={[
+                  styles.barDayText,
+                  isSelected && styles.barDayTextSelected,
+                  isToday && styles.barDayTextToday,
+                ]}
+              >
+                {d.day}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
     </View>
   );
 }
@@ -634,10 +825,15 @@ function AddExpenseModal({
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { expenses, loading, getCategoryInfo } = useExpenses();
+  const { expenses, loading, getCategoryInfo, getSubContextInfo } = useExpenses();
   const [modalVisible, setModalVisible] = useState(false);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+
+  // Data Visualization State
+  const [chartTab, setChartTab] = useState<'category' | 'sphere' | 'daily'>('category');
+  const [selectedChartKey, setSelectedChartKey] = useState<string | null>(null);
+  const [selectedDay, setSelectedDay] = useState<number | null>(null);
 
   const currentMonth = new Date().getMonth();
   const currentYear = new Date().getFullYear();
@@ -659,6 +855,43 @@ export default function HomeScreen() {
       .map(([category, amount]) => ({ category, amount }))
       .sort((a, b) => b.amount - a.amount);
   }, [monthSpent]);
+
+  // Category Items for Donut
+  const categoryChartItems = useMemo(() => {
+    return grouped.map((item) => {
+      const meta = getCategoryInfo(item.category);
+      return {
+        key: item.category,
+        label: meta.label,
+        amount: item.amount,
+        color: meta.color,
+        icon: meta.icon,
+      };
+    });
+  }, [grouped, getCategoryInfo]);
+
+  // Sphere Distribution Items for Donut
+  const sphereChartItems = useMemo(() => {
+    const map = new Map<string, number>();
+    monthSpent.forEach((e) => {
+      const s = e.subContext || 'Personal';
+      map.set(s, (map.get(s) || 0) + e.amount);
+    });
+    return Array.from(map.entries())
+      .map(([key, amount]) => {
+        const info = getSubContextInfo(key);
+        return {
+          key,
+          label: info.label,
+          amount,
+          color: info.color,
+          icon: info.icon,
+        };
+      })
+      .sort((a, b) => b.amount - a.amount);
+  }, [monthSpent, getSubContextInfo]);
+
+  const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
 
   // Sub-Context Breakdown by Category
   const categorySubBreakdown = useMemo(() => {
@@ -759,63 +992,250 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* CATEGORY BREAKDOWN */}
+        {/* INTERACTIVE DATA VISUALIZATION SECTION */}
         <View style={styles.sectionHeading}>
-          <View><Text style={styles.sectionKicker}>YOUR BREAKDOWN</Text><Text style={styles.sectionTitle}>Where it goes</Text></View>
+          <View>
+            <Text style={styles.sectionKicker}>VISUAL ANALYTICS</Text>
+            <Text style={styles.sectionTitle}>Where it goes</Text>
+          </View>
           <Text style={styles.sectionTotal}>{compactCurrency(total)}</Text>
         </View>
+
         <View style={styles.breakdownCard}>
-          <DonutChart
-            total={total}
-            grouped={grouped}
-            getCatColor={(cat) => getCategoryInfo(cat).color}
-          />
-          {grouped.length > 0 ? (
-            <View style={styles.legend}>
-              <Text style={styles.legendHelper}>Tap any category to see context split</Text>
-              {grouped.map((item) => {
-                const isExpanded = expandedCategory === item.category;
-                const catMeta = getCategoryInfo(item.category);
-                const subMap = categorySubBreakdown.get(item.category);
-                return (
-                  <View key={item.category} style={styles.categoryItemWrap}>
-                    <Pressable
-                      onPress={() => setExpandedCategory(isExpanded ? null : item.category)}
-                      style={styles.legendRow}
-                    >
-                      <View style={[styles.legendDot, { backgroundColor: catMeta.color }]} />
-                      <Text style={styles.legendLabel}>{item.category}</Text>
-                      <Text style={styles.legendAmount}>{currency(item.amount)}</Text>
-                      <Feather
-                        name={isExpanded ? 'chevron-up' : 'chevron-down'}
-                        size={14}
-                        color={palette.mutedForeground}
-                        style={{ marginLeft: 6 }}
-                      />
-                    </Pressable>
-                    {isExpanded && subMap && (
-                      <View style={styles.subBreakdownBox}>
-                        {Array.from(subMap.entries()).map(([ctx, amt]) => {
-                          if (amt === 0) return null;
-                          return (
-                            <View key={ctx} style={styles.subBreakdownRow}>
-                              <Text style={styles.subBreakdownLabel}>• {ctx}</Text>
-                              <Text style={styles.subBreakdownAmt}>{currency(amt)}</Text>
-                            </View>
-                          );
-                        })}
+          {/* SHADCN SEGMENTED CONTROLS */}
+          <View style={styles.chartTabRow}>
+            <Pressable
+              onPress={() => {
+                void Haptics.selectionAsync();
+                setChartTab('category');
+                setSelectedChartKey(null);
+              }}
+              style={[styles.chartTabBtn, chartTab === 'category' && styles.chartTabBtnActive]}
+            >
+              <Feather
+                name="pie-chart"
+                size={12}
+                color={chartTab === 'category' ? '#FFFFFF' : palette.mutedForeground}
+              />
+              <Text
+                style={[
+                  styles.chartTabText,
+                  chartTab === 'category' && styles.chartTabTextActive,
+                ]}
+              >
+                Category
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => {
+                void Haptics.selectionAsync();
+                setChartTab('sphere');
+                setSelectedChartKey(null);
+              }}
+              style={[styles.chartTabBtn, chartTab === 'sphere' && styles.chartTabBtnActive]}
+            >
+              <Feather
+                name="compass"
+                size={12}
+                color={chartTab === 'sphere' ? '#FFFFFF' : palette.mutedForeground}
+              />
+              <Text
+                style={[
+                  styles.chartTabText,
+                  chartTab === 'sphere' && styles.chartTabTextActive,
+                ]}
+              >
+                Spheres
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => {
+                void Haptics.selectionAsync();
+                setChartTab('daily');
+                setSelectedChartKey(null);
+              }}
+              style={[styles.chartTabBtn, chartTab === 'daily' && styles.chartTabBtnActive]}
+            >
+              <Feather
+                name="bar-chart-2"
+                size={12}
+                color={chartTab === 'daily' ? '#FFFFFF' : palette.mutedForeground}
+              />
+              <Text
+                style={[
+                  styles.chartTabText,
+                  chartTab === 'daily' && styles.chartTabTextActive,
+                ]}
+              >
+                Daily Trend
+              </Text>
+            </Pressable>
+          </View>
+
+          {/* TAB 1: CATEGORY DONUT */}
+          {chartTab === 'category' && (
+            <>
+              <InteractiveDonutChart
+                total={total}
+                items={categoryChartItems}
+                selectedKey={selectedChartKey}
+                onSelectKey={(key) => {
+                  setSelectedChartKey(key);
+                  if (key) setExpandedCategory(key);
+                }}
+                emptyEyebrow="THIS MONTH"
+              />
+
+              {grouped.length > 0 ? (
+                <View style={styles.legend}>
+                  <Text style={styles.legendHelper}>Tap slice or row to inspect context split</Text>
+                  {grouped.map((item) => {
+                    const isExpanded = expandedCategory === item.category;
+                    const isSelected = selectedChartKey === item.category;
+                    const catMeta = getCategoryInfo(item.category);
+                    const subMap = categorySubBreakdown.get(item.category);
+
+                    return (
+                      <View key={item.category} style={styles.categoryItemWrap}>
+                        <Pressable
+                          onPress={() => {
+                            void Haptics.selectionAsync();
+                            const next = isExpanded ? null : item.category;
+                            setExpandedCategory(next);
+                            setSelectedChartKey(next);
+                          }}
+                          style={[
+                            styles.legendRow,
+                            isSelected && { backgroundColor: `${catMeta.color}12`, borderRadius: 10 },
+                          ]}
+                        >
+                          <View style={[styles.legendDot, { backgroundColor: catMeta.color }]} />
+                          <Text style={[styles.legendLabel, isSelected && { fontFamily: 'Inter_700Bold' }]}>
+                            {item.category}
+                          </Text>
+                          <Text style={[styles.legendAmount, isSelected && { color: catMeta.color }]}>
+                            {currency(item.amount)}
+                          </Text>
+                          <Feather
+                            name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                            size={14}
+                            color={palette.mutedForeground}
+                            style={{ marginLeft: 6 }}
+                          />
+                        </Pressable>
+
+                        {isExpanded && subMap && (
+                          <View style={styles.subBreakdownBox}>
+                            {Array.from(subMap.entries()).map(([ctx, amt]) => {
+                              if (amt === 0) return null;
+                              const sphereStyle = getSphereStyle(ctx, getSubContextInfo(ctx).color);
+                              return (
+                                <View key={ctx} style={styles.subBreakdownRow}>
+                                  <View style={styles.subSphereBadgeWrap}>
+                                    <View
+                                      style={[
+                                        styles.subSphereDot,
+                                        { backgroundColor: sphereStyle.color },
+                                      ]}
+                                    />
+                                    <Text style={[styles.subBreakdownLabel, { color: sphereStyle.text }]}>
+                                      {ctx}
+                                    </Text>
+                                  </View>
+                                  <Text style={styles.subBreakdownAmt}>{currency(amt)}</Text>
+                                </View>
+                              );
+                            })}
+                          </View>
+                        )}
                       </View>
-                    )}
-                  </View>
-                );
-              })}
-            </View>
-          ) : (
-            <View style={styles.emptyChart}>
-              <Feather name="pie-chart" size={20} color={palette.primary} />
-              <Text style={styles.emptyChartTitle}>Your story starts here</Text>
-              <Text style={styles.emptyChartText}>Add an expense to see your spending shape up.</Text>
-            </View>
+                    );
+                  })}
+                </View>
+              ) : (
+                <View style={styles.emptyChart}>
+                  <Feather name="pie-chart" size={20} color={palette.primary} />
+                  <Text style={styles.emptyChartTitle}>Your story starts here</Text>
+                  <Text style={styles.emptyChartText}>Add an expense to see your spending shape up.</Text>
+                </View>
+              )}
+            </>
+          )}
+
+          {/* TAB 2: SPHERES DONUT */}
+          {chartTab === 'sphere' && (
+            <>
+              <InteractiveDonutChart
+                total={total}
+                items={sphereChartItems}
+                selectedKey={selectedChartKey}
+                onSelectKey={setSelectedChartKey}
+                emptyEyebrow="ALL SPHERES"
+              />
+
+              {sphereChartItems.length > 0 ? (
+                <View style={styles.sphereCardList}>
+                  {sphereChartItems.map((item) => {
+                    const isSelected = selectedChartKey === item.key;
+                    const sphereStyle = getSphereStyle(item.key, item.color);
+                    const pct = total > 0 ? ((item.amount / total) * 100).toFixed(1) : '0';
+
+                    return (
+                      <Pressable
+                        key={item.key}
+                        onPress={() => {
+                          void Haptics.selectionAsync();
+                          setSelectedChartKey(isSelected ? null : item.key);
+                        }}
+                        style={[
+                          styles.sphereRow,
+                          {
+                            borderColor: isSelected ? sphereStyle.color : sphereStyle.border,
+                            backgroundColor: isSelected ? `${sphereStyle.color}15` : sphereStyle.bg,
+                          },
+                        ]}
+                      >
+                        <View style={styles.sphereRowLeft}>
+                          <View
+                            style={[
+                              styles.sphereIconCircle,
+                              { backgroundColor: `${sphereStyle.color}25` },
+                            ]}
+                          >
+                            <Feather
+                              name={(item.icon as keyof typeof Feather.glyphMap) || 'compass'}
+                              size={15}
+                              color={sphereStyle.text}
+                            />
+                          </View>
+                          <View>
+                            <Text style={[styles.sphereLabel, { color: sphereStyle.text }]}>
+                              {item.label} Sphere
+                            </Text>
+                            <Text style={styles.sphereSub}>{pct}% of monthly outflows</Text>
+                          </View>
+                        </View>
+                        <View style={styles.sphereRowRight}>
+                          <Text style={styles.sphereAmount}>{currency(item.amount)}</Text>
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              ) : null}
+            </>
+          )}
+
+          {/* TAB 3: DAILY SPEND BAR CHART */}
+          {chartTab === 'daily' && (
+            <DailyBarChart
+              monthExpenses={monthSpent}
+              daysInMonth={daysInMonth}
+              selectedDay={selectedDay}
+              onSelectDay={setSelectedDay}
+            />
           )}
         </View>
 
@@ -913,11 +1333,28 @@ export default function HomeScreen() {
                     <Text style={styles.expenseMeta}>
                       {expense.person ? `${expense.person} · ` : ''}{expense.category} · {formatDate(expense.date)}
                     </Text>
-                    <View style={[styles.contextBadge, expense.subContext === 'Developer' && styles.contextBadgeDev]}>
-                      <Text style={[styles.contextBadgeText, expense.subContext === 'Developer' && styles.contextBadgeTextDev]}>
-                        {expense.subContext}
-                      </Text>
-                    </View>
+                    {(() => {
+                      const sphereStyle = getSphereStyle(
+                        expense.subContext,
+                        getSubContextInfo(expense.subContext).color,
+                      );
+                      return (
+                        <View
+                          style={[
+                            styles.contextBadge,
+                            {
+                              backgroundColor: sphereStyle.bg,
+                              borderColor: sphereStyle.border,
+                              borderWidth: 1,
+                            },
+                          ]}
+                        >
+                          <Text style={[styles.contextBadgeText, { color: sphereStyle.text }]}>
+                            {expense.subContext}
+                          </Text>
+                        </View>
+                      );
+                    })()}
                     {expense.eventTag ? (
                       <View style={styles.eventBadge}>
                         <Text style={styles.eventBadgeText}>#{expense.eventTag}</Text>
@@ -1112,4 +1549,47 @@ const styles = StyleSheet.create({
   colorCircle: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   colorCircleSelected: { transform: [{ scale: 1.15 }], borderWidth: 2, borderColor: '#FFF' },
   dialogSaveBtn: { height: 48, borderRadius: 14, backgroundColor: palette.foreground, alignItems: 'center', justifyContent: 'center', marginTop: 6 },
+  donutActiveCenter: { alignItems: 'center', maxWidth: 135 },
+  activeCenterBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, marginBottom: 3 },
+  activeCenterLabel: { fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 0.8 },
+  activeCenterAmount: { fontSize: 18, fontFamily: 'Inter_700Bold', color: palette.foreground, letterSpacing: -0.5 },
+  activeCenterPct: { fontSize: 10, fontFamily: 'Inter_600SemiBold', color: palette.mutedForeground, marginTop: 1 },
+  activeCenterReset: { fontSize: 9, fontFamily: 'Inter_500Medium', color: '#6366F1', marginTop: 4 },
+  donutHint: { fontSize: 9, fontFamily: 'Inter_500Medium', color: palette.mutedForeground, marginTop: 3 },
+  chartTabRow: { flexDirection: 'row', backgroundColor: '#F1F5F9', borderRadius: 12, padding: 3, marginBottom: 16 },
+  chartTabBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 8, borderRadius: 9 },
+  chartTabBtnActive: { backgroundColor: '#0F172A', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 3, elevation: 2 },
+  chartTabText: { fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#64748B' },
+  chartTabTextActive: { color: '#FFFFFF', fontFamily: 'Inter_700Bold' },
+  subSphereBadgeWrap: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  subSphereDot: { width: 7, height: 7, borderRadius: 3.5 },
+  sphereCardList: { marginTop: 16, gap: 10 },
+  sphereRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 13, borderWidth: 1 },
+  sphereRowLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  sphereIconCircle: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  sphereLabel: { fontSize: 13, fontFamily: 'Inter_700Bold' },
+  sphereSub: { fontSize: 11, fontFamily: 'Inter_400Regular', color: palette.mutedForeground, marginTop: 1 },
+  sphereRowRight: { alignItems: 'flex-end' },
+  sphereAmount: { fontSize: 13, fontFamily: 'Inter_700Bold', color: palette.foreground },
+  dailyChartContainer: { marginVertical: 6 },
+  dailyHeader: { marginBottom: 14 },
+  dailyReadoutActive: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#E2E8F0', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12 },
+  dailyReadoutPill: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#E2E8F0', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  dailyReadoutDay: { fontSize: 11, fontFamily: 'Inter_700Bold', color: '#0F172A' },
+  dailyReadoutAmount: { fontSize: 14, fontFamily: 'Inter_700Bold', color: '#0F172A' },
+  dailyReadoutSub: { fontSize: 11, fontFamily: 'Inter_500Medium', color: palette.mutedForeground },
+  dailyResetLink: { fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#6366F1' },
+  dailyReadoutDefault: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 4 },
+  dailyMetaLabel: { fontSize: 10, fontFamily: 'Inter_700Bold', color: palette.mutedForeground, letterSpacing: 0.8 },
+  dailyMetaVal: { fontSize: 14, fontFamily: 'Inter_700Bold', color: palette.foreground, marginTop: 2 },
+  dailyMetaRight: { alignItems: 'flex-end' },
+  dailyHint: { fontSize: 11, fontFamily: 'Inter_500Medium', color: palette.mutedForeground },
+  barsScrollContent: { paddingVertical: 10, paddingHorizontal: 4, gap: 6 },
+  barCol: { alignItems: 'center', width: 22 },
+  barTrack: { height: 100, justifyContent: 'flex-end', width: 10, borderRadius: 5, backgroundColor: '#F1F5F9', overflow: 'hidden' },
+  barPillar: { width: '100%', borderRadius: 5 },
+  barPillarSelected: { shadowColor: '#6366F1', shadowRadius: 6, shadowOpacity: 0.3 },
+  barDayText: { fontSize: 9, fontFamily: 'Inter_500Medium', color: palette.mutedForeground, marginTop: 6 },
+  barDayTextSelected: { color: '#0F172A', fontFamily: 'Inter_700Bold' },
+  barDayTextToday: { color: '#6366F1', fontFamily: 'Inter_700Bold' },
 });

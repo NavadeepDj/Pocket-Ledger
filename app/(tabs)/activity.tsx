@@ -17,6 +17,7 @@ import { getSphereStyle } from '@/app/(tabs)/index';
 import colors from '@/constants/colors';
 import { CategoryItem, Expense, SubContextItem, useExpenses } from '@/context/ExpenseContext';
 import { EditExpenseModal } from '@/components/EditExpenseModal';
+import { SmartSmsModal } from '@/components/SmartSmsModal';
 
 const palette = colors.light;
 const currency = (amount: number) =>
@@ -155,6 +156,7 @@ export default function ActivityScreen() {
   const [filterContext, setFilterContext] = useState<string>('All');
   const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+  const [showSmsModal, setShowSmsModal] = useState<boolean>(false);
 
   const filteredExpenses = useMemo(() => {
     return expenses.filter((item) => {
@@ -198,8 +200,19 @@ export default function ActivityScreen() {
         refreshControl={<RefreshControl refreshing={loading} onRefresh={() => void reload()} tintColor={palette.primary} />}
         ListHeaderComponent={
           <View style={styles.header}>
-            <Text style={styles.kicker}>YOUR LEDGER</Text>
-            <Text style={styles.title}>All activity</Text>
+            <View style={styles.headerTopRow}>
+              <View>
+                <Text style={styles.kicker}>YOUR LEDGER</Text>
+                <Text style={styles.title}>All activity</Text>
+              </View>
+              <Pressable
+                onPress={() => setShowSmsModal(true)}
+                style={({ pressed }) => [styles.headerSmsBtn, pressed && styles.pressed]}
+              >
+                <Feather name="zap" size={13} color="#6366F1" />
+                <Text style={styles.headerSmsText}>SMS Import</Text>
+              </Pressable>
+            </View>
 
             {/* SUMMARY CARD */}
             <View style={styles.summary}>
@@ -296,6 +309,9 @@ export default function ActivityScreen() {
           existingEvents={existingEvents}
         />
       )}
+
+      {/* SMART SMS MODAL */}
+      <SmartSmsModal visible={showSmsModal} onClose={() => setShowSmsModal(false)} />
     </View>
   );
 }
@@ -304,6 +320,25 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: palette.background },
   content: { paddingHorizontal: 20 },
   header: { marginBottom: 18 },
+  headerTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  headerSmsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1,
+    borderColor: '#E0E7FF',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 14,
+    marginTop: 4,
+  },
+  headerSmsText: {
+    color: '#6366F1',
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 12,
+  },
+  pressed: { opacity: 0.78 },
   kicker: { color: palette.primary, fontFamily: 'Inter_700Bold', fontSize: 10, letterSpacing: 1.4 },
   title: { color: palette.foreground, fontFamily: 'Inter_700Bold', fontSize: 30, letterSpacing: -0.8, marginTop: 5 },
   summary: { backgroundColor: palette.foreground, borderRadius: 22, padding: 20, marginTop: 18, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },

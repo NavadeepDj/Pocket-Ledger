@@ -25,6 +25,7 @@ import {
   useExpenses,
 } from '@/context/ExpenseContext';
 import { EditExpenseModal } from '@/components/EditExpenseModal';
+import { SmartSmsModal } from '@/components/SmartSmsModal';
 import colors from '@/constants/colors';
 
 const palette = colors.light;
@@ -827,6 +828,7 @@ export default function HomeScreen() {
   const router = useRouter();
   const { expenses, loading, getCategoryInfo, getSubContextInfo } = useExpenses();
   const [modalVisible, setModalVisible] = useState(false);
+  const [smsModalVisible, setSmsModalVisible] = useState(false);
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
@@ -964,6 +966,14 @@ export default function HomeScreen() {
           </View>
           <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
             <Pressable
+              onPress={() => setSmsModalVisible(true)}
+              style={({ pressed }) => [styles.headerSmsBtn, pressed && styles.pressed]}
+              hitSlop={6}
+            >
+              <Feather name="zap" size={16} color="#6366F1" />
+              <Text style={styles.headerSmsText}>SMS</Text>
+            </Pressable>
+            <Pressable
               onPress={() => router.push('/reports')}
               style={({ pressed }) => [styles.headerReportBtn, pressed && styles.pressed]}
               hitSlop={6}
@@ -991,6 +1001,21 @@ export default function HomeScreen() {
             <View style={styles.heroSpark}><Feather name="trending-up" size={22} color={palette.primaryForeground} /><Text style={styles.sparkText}>STAY AWARE</Text></View>
           </View>
         </View>
+
+        {/* SMART SMS BANNER */}
+        <Pressable
+          onPress={() => setSmsModalVisible(true)}
+          style={({ pressed }) => [styles.smsBanner, pressed && styles.pressed]}
+        >
+          <View style={styles.smsBannerIcon}>
+            <Feather name="zap" size={16} color="#6366F1" />
+          </View>
+          <View style={styles.smsBannerContent}>
+            <Text style={styles.smsBannerTitle}>Smart SMS & UPI Auto-Parser</Text>
+            <Text style={styles.smsBannerSubtitle}>Paste PhonePe or bank SMS to log in 1 tap</Text>
+          </View>
+          <Feather name="chevron-right" size={16} color={palette.mutedForeground} />
+        </Pressable>
 
         {/* INTERACTIVE DATA VISUALIZATION SECTION */}
         <View style={styles.sectionHeading}>
@@ -1378,6 +1403,7 @@ export default function HomeScreen() {
         <Text style={styles.fabText}>Add expense</Text>
       </Pressable>
       <AddExpenseModal visible={modalVisible} onClose={() => setModalVisible(false)} existingEvents={existingEvents} />
+      <SmartSmsModal visible={smsModalVisible} onClose={() => setSmsModalVisible(false)} />
       {editingExpense && (
         <EditExpenseModal
           expense={editingExpense}
@@ -1397,9 +1423,16 @@ const styles = StyleSheet.create({
   brand: { color: palette.foreground, fontFamily: 'Inter_700Bold', fontSize: 24, letterSpacing: -0.8 },
   brandAccent: { color: palette.primary },
   greeting: { color: palette.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 13, marginTop: 3 },
+  headerSmsBtn: { height: 44, paddingHorizontal: 12, backgroundColor: '#EEF2FF', borderWidth: 1, borderColor: '#E0E7FF', borderRadius: 15, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  headerSmsText: { color: '#6366F1', fontFamily: 'Inter_700Bold', fontSize: 12 },
   headerReportBtn: { width: 44, height: 44, backgroundColor: palette.card, borderWidth: 1, borderColor: '#ECE8DE', borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   headerAdd: { width: 44, height: 44, backgroundColor: palette.foreground, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
-  heroCard: { backgroundColor: palette.foreground, borderRadius: 24, padding: 22, marginBottom: 30 },
+  heroCard: { backgroundColor: palette.foreground, borderRadius: 24, padding: 22, marginBottom: 18 },
+  smsBanner: { backgroundColor: palette.card, borderRadius: 18, borderWidth: 1, borderColor: '#ECE8DE', padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 24 },
+  smsBannerIcon: { width: 36, height: 36, borderRadius: 12, backgroundColor: '#EEF2FF', alignItems: 'center', justifyContent: 'center' },
+  smsBannerContent: { flex: 1 },
+  smsBannerTitle: { color: palette.foreground, fontFamily: 'Inter_600SemiBold', fontSize: 14 },
+  smsBannerSubtitle: { color: palette.mutedForeground, fontFamily: 'Inter_400Regular', fontSize: 11, marginTop: 2 },
   heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   heroLabel: { color: '#B5C9BF', fontFamily: 'Inter_600SemiBold', fontSize: 11, letterSpacing: 1.2 },
   monthPill: { backgroundColor: '#315149', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 9 },

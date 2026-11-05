@@ -25,7 +25,11 @@ import {
   useExpenses,
 } from '@/context/ExpenseContext';
 import { EditExpenseModal } from '@/components/EditExpenseModal';
+import { SpendingInsights } from '@/components/SpendingInsights';
+import { PersonSuggestions } from '@/components/PersonSuggestions';
 import { SmartSmsModal } from '@/components/SmartSmsModal';
+import { PaymentDraftsModal } from '@/components/PaymentDraftsModal';
+import { usePaymentCapture } from '@/context/PaymentCaptureContext';
 import colors from '@/constants/colors';
 
 const palette = colors.light;
@@ -776,6 +780,7 @@ function AddExpenseModal({
               autoCapitalize="words"
             />
 
+            <PersonSuggestions value={person} onSelect={setPerson} />
             <Text style={styles.fieldLabel}>NOTE <Text style={styles.optional}>OPTIONAL</Text></Text>
             <TextInput
               testID="expense-note"
@@ -829,6 +834,9 @@ export default function HomeScreen() {
   const { expenses, loading, getCategoryInfo, getSubContextInfo } = useExpenses();
   const [modalVisible, setModalVisible] = useState(false);
   const [smsModalVisible, setSmsModalVisible] = useState(false);
+  const [draftsVisible, setDraftsVisible] = useState(false);
+  const { drafts: paymentDrafts } = usePaymentCapture();
+  const pendingPaymentCount = paymentDrafts.filter(d => d.status === 'pending').length;
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
@@ -966,15 +974,7 @@ export default function HomeScreen() {
           </View>
           <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
             <Pressable
-              onPress={() => setSmsModalVisible(true)}
-              style={({ pressed }) => [styles.headerSmsBtn, pressed && styles.pressed]}
-              hitSlop={6}
-            >
-              <Feather name="zap" size={16} color="#6366F1" />
-              <Text style={styles.headerSmsText}>SMS</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => router.push('/reports')}
+              accessibilityRole="button" accessibilityLabel="Open reports" onPress={() => router.push('/reports')}
               style={({ pressed }) => [styles.headerReportBtn, pressed && styles.pressed]}
               hitSlop={6}
             >
@@ -1003,19 +1003,16 @@ export default function HomeScreen() {
         </View>
 
         {/* SMART SMS BANNER */}
-        <Pressable
-          onPress={() => setSmsModalVisible(true)}
-          style={({ pressed }) => [styles.smsBanner, pressed && styles.pressed]}
-        >
-          <View style={styles.smsBannerIcon}>
-            <Feather name="zap" size={16} color="#6366F1" />
-          </View>
+        <Pressable onPress={() => setDraftsVisible(true)} style={({ pressed }) => [styles.smsBanner, pressed && styles.pressed]}>
+          <View style={styles.smsBannerIcon}><Feather name="inbox" size={18} color="#6366F1" /></View>
           <View style={styles.smsBannerContent}>
-            <Text style={styles.smsBannerTitle}>Smart SMS & UPI Auto-Parser</Text>
-            <Text style={styles.smsBannerSubtitle}>Paste PhonePe or bank SMS to log in 1 tap</Text>
+            <Text style={styles.smsBannerTitle}>Payment drafts{pendingPaymentCount ? ` (${pendingPaymentCount})` : ''}</Text>
+            <Text style={styles.smsBannerSubtitle}>Review bank emails and payment notifications</Text>
           </View>
           <Feather name="chevron-right" size={16} color={palette.mutedForeground} />
         </Pressable>
+        <Text style={{ color: palette.mutedForeground, fontSize: 11, marginTop: -14, marginBottom: 22 }}>SMS import is paused. Email and notification drafts are available.</Text>
+        <SpendingInsights year={currentYear} month={currentMonth} />
 
         {/* INTERACTIVE DATA VISUALIZATION SECTION */}
         <View style={styles.sectionHeading}>
@@ -1404,6 +1401,7 @@ export default function HomeScreen() {
       </Pressable>
       <AddExpenseModal visible={modalVisible} onClose={() => setModalVisible(false)} existingEvents={existingEvents} />
       <SmartSmsModal visible={smsModalVisible} onClose={() => setSmsModalVisible(false)} />
+      <PaymentDraftsModal visible={draftsVisible} onClose={() => setDraftsVisible(false)} />
       {editingExpense && (
         <EditExpenseModal
           expense={editingExpense}
@@ -1589,9 +1587,9 @@ const styles = StyleSheet.create({
   activeCenterPct: { fontSize: 10, fontFamily: 'Inter_600SemiBold', color: palette.mutedForeground, marginTop: 1 },
   activeCenterReset: { fontSize: 9, fontFamily: 'Inter_500Medium', color: '#6366F1', marginTop: 4 },
   donutHint: { fontSize: 9, fontFamily: 'Inter_500Medium', color: palette.mutedForeground, marginTop: 3 },
-  chartTabRow: { flexDirection: 'row', backgroundColor: '#F1F5F9', borderRadius: 12, padding: 3, marginBottom: 16 },
+  chartTabRow: { flexDirection: 'row', backgroundColor: palette.muted, borderRadius: 12, padding: 3, marginBottom: 16 },
   chartTabBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 8, borderRadius: 9 },
-  chartTabBtnActive: { backgroundColor: '#0F172A', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 3, elevation: 2 },
+  chartTabBtnActive: { backgroundColor: palette.foreground, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 3, elevation: 2 },
   chartTabText: { fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#64748B' },
   chartTabTextActive: { color: '#FFFFFF', fontFamily: 'Inter_700Bold' },
   subSphereBadgeWrap: { flexDirection: 'row', alignItems: 'center', gap: 5 },

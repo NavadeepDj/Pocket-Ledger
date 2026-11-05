@@ -12,6 +12,8 @@ expo-env.d.ts
 # Native
 ios/
 android/
+!modules/payment-capture/android/
+!modules/payment-capture/android/**
 *.orig.*
 *.jks
 *.p8

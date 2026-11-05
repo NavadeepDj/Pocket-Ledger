@@ -260,6 +260,8 @@ async function writeWebExpenses(expenses: Expense[]) {
 }
 
 export type AddExpenseInput = {
+  /** Stable ID for retrying an accepted payment draft without inserting it twice. */
+  id?: string;
   amount: number;
   category: string;
   note: string;
@@ -349,7 +351,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
   const addExpense = useCallback(
     async (input: AddExpenseInput) => {
       const expense: Expense = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: input.id ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         amount: Number(input.amount),
         category: input.category,
         subContext: input.subContext ?? 'Personal',
@@ -361,6 +363,10 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       };
       const db = getDatabase();
       if (db) {
+        if (input.id && db.getFirstSync('SELECT id FROM expenses WHERE id = ?', input.id)) {
+          setExpenses(await readExpenses());
+          return;
+        }
         db.runSync(
           'INSERT INTO expenses (id, amount, category, note, date, direction, person, sub_context, event_tag) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
           expense.id,

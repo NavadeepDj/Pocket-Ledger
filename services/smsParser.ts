@@ -115,6 +115,7 @@ export function inferCategoryAndContext(merchant: string, text: string): { categ
 export function parseSmsText(rawSms: string): ParsedTransaction | null {
   const text = rawSms.trim();
   if (!text || text.length < 15) return null;
+  if (/\b(otp|one[ -]time password|verification code|failed|declined|pending|processing|unsuccessful|request|requested|reminder|due|scheduled|will be|could not|not debited|not paid|not sent)\b/i.test(text)) return null;
 
   // 1. Determine Direction: Spent (outflow) vs Received (inflow)
   const spentKeywords = /\b(debited|spent|paid|sent|withdrawn|purchase of|transferred to|deducted|vpa debited)\b/i;
@@ -133,6 +134,8 @@ export function parseSmsText(rawSms: string): ParsedTransaction | null {
   // 2. Extract Amount
   // Matches: "Rs. 450", "Rs 450.50", "INR 1,249", "₹ 500", "Rs.1,200.00"
   const amountRegexes = [
+    /(?:debited|credited|spent|paid|sent|received|withdrawn|deposited|refunded|deducted)(?:\s+(?:by|with|of|for|an?\s+amount\s+of))*\s*(?:rs\.?|inr|₹)\s*([0-9,]+(?:\.[0-9]{1,2})?)/i,
+    /(?:rs\.?|inr|₹)\s*([0-9,]+(?:\.[0-9]{1,2})?)\s+(?:(?:has been|was|is)\s+)?(?:debited|credited|spent|paid|sent|received|withdrawn|deposited|refunded|deducted)\b/i,
     /(?:rs\.?|inr|₹)\s*([0-9,]+(?:\.[0-9]{1,2})?)/i,
     /([0-9,]+(?:\.[0-9]{1,2})?)\s*(?:debited|credited|spent|withdrawn|paid)/i,
     /(?:amount|amt)\s*(?:of)?\s*(?:rs\.?|inr|₹)?\s*([0-9,]+(?:\.[0-9]{1,2})?)/i,
@@ -148,7 +151,7 @@ export function parseSmsText(rawSms: string): ParsedTransaction | null {
   }
 
   const amount = parseFloat(rawAmount);
-  if (!amount || isNaN(amount) || amount <= 0) {
+  if (!Number.isFinite(amount) || amount <= 0) {
     return null;
   }
 
@@ -156,6 +159,9 @@ export function parseSmsText(rawSms: string): ParsedTransaction | null {
   // Patterns like: "to Rahul", "at Swiggy", "to VPA rahul@ybl", "info: SWIGGY", "sent to STARBUCKS"
   let merchant = '';
   const merchantPatterns = [
+    /\bat\s+([A-Za-z0-9\s._&'@-]+?)(?=\s+(?:on|ref|via|using|from|bal|avl|clear|thru)\b|[,.\n]|$)/i,
+    /\b(?:paid to|transfer to|transferred to|sent to|to vpa|to)\s+([A-Za-z0-9\s._&'@-]+?)(?=\s+(?:on|ref|via|using|from|bal|avl|clear|thru)\b|[,.\n]|$)/i,
+    /\b(?:received from|credited by|from)\s+([A-Za-z0-9\s._&'@-]+?)(?=\s+(?:on|ref|via|to|bal|avl)\b|[,.\n]|$)/i,
     /(?:paid to|transfer to|transferred to|sent to|spent on|to vpa|to)\s+([A-Za-z0-9\s._&'-]+?)(?:\s+(?:on|ref|via|using|from|bal|avl|clear|thru|dated|\.|\,|\n|$))/i,
     /(?:at|info\/|info:)\s+([A-Za-z0-9\s._&'-]+?)(?:\s+(?:on|ref|via|using|from|bal|avl|clear|thru|\.|\,|\n|$))/i,
     /(?:from|credited by|received from)\s+([A-Za-z0-9\s._&'-]+?)(?:\s+(?:on|ref|via|to|bal|avl|\.|\,|\n|$))/i,
@@ -188,8 +194,8 @@ export function parseSmsText(rawSms: string): ParsedTransaction | null {
 
   // 5. Extract Reference / UPI Ref number
   let reference = '';
-  const refMatch = text.match(/(?:upi\s*(?:ref|reference)?|ref\s*no|rrn|txn\s*id)\s*[:#\-]?\s*([0-9A-Za-z]{6,20})/i);
-  if (refMatch && refMatch[1]) {
+  const refMatch = text.match(/(?:upi\s*(?:ref(?:erence)?|txn)(?:\s*(?:no\.?|id))?|ref(?:erence)?(?:\s*(?:no\.?|id))?|rrn|txn\s*id|transaction\s*id)\s*[:#\-]?\s*([0-9A-Za-z]{6,35})\b/i);
+  if (refMatch && /[0-9]/.test(refMatch[1])) {
     reference = refMatch[1];
   }
 

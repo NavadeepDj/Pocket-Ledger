@@ -1,3 +1,4 @@
+import { SpendingInsights } from '@/components/SpendingInsights';
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as Print from 'expo-print';
@@ -320,9 +321,11 @@ export default function ReportsScreen() {
           </View>
           <View style={styles.verifiedTag}>
             <Feather name="shield" size={14} color="#059669" />
-            <Text style={styles.verifiedText}>Audit Grounded</Text>
+            <Text style={styles.verifiedText}>Saved entries</Text>
           </View>
         </View>
+
+        <SpendingInsights year={selectedYear} month={selectedMonth} />
 
         {/* ACTIONS */}
         <View style={styles.actionRow}>

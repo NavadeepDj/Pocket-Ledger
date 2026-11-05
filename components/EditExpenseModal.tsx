@@ -16,6 +16,7 @@ import {
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import colors from '@/constants/colors';
+import { PersonSuggestions } from './PersonSuggestions';
 import {
   CategoryItem,
   Expense,
@@ -271,6 +272,8 @@ export type EditExpenseModalProps = {
   visible: boolean;
   onClose: () => void;
   existingEvents?: string[];
+  onReviewSave?: (expense: Expense) => Promise<void>;
+  reviewDetails?: string;
 };
 
 export function EditExpenseModal({
@@ -278,6 +281,8 @@ export function EditExpenseModal({
   visible,
   onClose,
   existingEvents = [],
+  onReviewSave,
+  reviewDetails,
 }: EditExpenseModalProps) {
   const insets = useSafeAreaInsets();
   const { updateExpense, deleteExpense, categories, subContexts, addCategory, addSubContext } = useExpenses();
@@ -295,6 +300,7 @@ export function EditExpenseModal({
   const [showAddCatModal, setShowAddCatModal] = useState(false);
   const [showAddCtxModal, setShowAddCtxModal] = useState(false);
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (expense) {
@@ -319,14 +325,17 @@ export function EditExpenseModal({
 
   const save = async () => {
     const numericAmount = Number(amount.replace(',', '.'));
-    if (!numericAmount || numericAmount <= 0) {
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
       setError('Enter an amount greater than zero');
       return;
     }
-    await updateExpense({
+    if (saving) return;
+    setSaving(true);
+    try {
+    await (onReviewSave ?? updateExpense)({
       id: expense.id,
       amount: numericAmount,
-      note: note.trim() || (direction === 'spent' ? 'Expense' : 'Money received'),
+      note: note.trim() || (onReviewSave ? '' : direction === 'spent' ? 'Expense' : 'Money received'),
       category,
       direction,
       person: person.trim(),
@@ -337,6 +346,8 @@ export function EditExpenseModal({
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     Keyboard.dismiss();
     onClose();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not save. Please retry.'); }
+    finally { setSaving(false); }
   };
 
   const confirmDelete = () => {
@@ -360,18 +371,18 @@ export function EditExpenseModal({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={() => { if (!saving) onClose(); }}>
       <KeyboardAvoidingView behavior="padding" style={styles.modalBackdrop}>
-        <Pressable style={styles.modalDismiss} onPress={onClose} />
+        <Pressable style={styles.modalDismiss} disabled={saving} onPress={onClose} />
         <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 20) }]}>
           <View style={styles.sheetHandle} />
 
           <View style={styles.sheetHeader}>
             <View>
-              <Text style={styles.sheetKicker}>EDIT ENTRY</Text>
-              <Text style={styles.sheetTitle}>Edit transaction</Text>
+              <Text style={styles.sheetKicker}>{onReviewSave ? 'REVIEW BEFORE ADDING' : 'EDIT ENTRY'}</Text>
+              <Text style={styles.sheetTitle}>{onReviewSave ? 'Review payment' : 'Edit transaction'}</Text>
             </View>
-            <Pressable testID="close-edit-expense" onPress={onClose} style={styles.closeButton}>
+            <Pressable testID="close-edit-expense" disabled={saving} onPress={onClose} style={styles.closeButton}>
               <Feather name="x" size={20} color={palette.foreground} />
             </Pressable>
           </View>
@@ -399,6 +410,11 @@ export function EditExpenseModal({
               />
             </View>
 
+            {onReviewSave ? <View style={styles.eventInputBox}>
+              <Text style={styles.fieldLabel}>IMPORTED PAYMENT</Text>
+              <Text style={styles.categoryOptionText}>{reviewDetails}</Text>
+              <Text style={[styles.fieldLabel, { marginTop: 8 }]}>{selectedDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</Text>
+            </View> : <>
             {/* DATE */}
             <Text style={styles.fieldLabel}>DATE</Text>
             <View style={styles.dateRow}>
@@ -434,6 +450,7 @@ export function EditExpenseModal({
               </Pressable>
             </View>
 
+            </>}
             {/* TRANSACTION TYPE */}
             <Text style={styles.fieldLabel}>TRANSACTION TYPE</Text>
             <View style={styles.flowToggle}>
@@ -563,6 +580,8 @@ export function EditExpenseModal({
               autoCapitalize="words"
             />
 
+            <PersonSuggestions value={person} onSelect={setPerson} />
+
             {/* NOTE */}
             <Text style={styles.fieldLabel}>NOTE / DESCRIPTION <Text style={styles.optional}>OPTIONAL</Text></Text>
             <TextInput
@@ -580,23 +599,24 @@ export function EditExpenseModal({
 
             {/* SAVE BUTTON */}
             <Pressable
+              disabled={saving}
               testID="save-edit-expense"
               onPress={() => void save()}
               style={({ pressed }) => [styles.saveButton, pressed && styles.pressed]}
             >
               <Feather name="check" size={19} color={palette.primaryForeground} />
-              <Text style={styles.saveButtonText}>Save Changes</Text>
+              <Text style={styles.saveButtonText}>{saving ? 'Saving...' : onReviewSave ? 'Add to ledger' : 'Save Changes'}</Text>
             </Pressable>
 
             {/* DELETE ACTION */}
-            <Pressable
+            {!onReviewSave && <Pressable
               testID="delete-expense-action"
               onPress={confirmDelete}
               style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}
             >
               <Feather name="trash-2" size={17} color={palette.destructive} />
               <Text style={styles.deleteButtonText}>Delete this expense</Text>
-            </Pressable>
+            </Pressable>}
           </ScrollView>
         </View>
       </KeyboardAvoidingView>

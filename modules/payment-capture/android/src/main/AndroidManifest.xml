@@ -1,0 +1,24 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application
+    android:fullBackupContent="@xml/payment_capture_backup_rules"
+    android:dataExtractionRules="@xml/payment_capture_data_extraction_rules">
+    <receiver
+      android:name="expo.modules.paymentcapture.PaymentSmsReceiver"
+      android:enabled="false"
+      android:exported="true"
+      android:permission="android.permission.BROADCAST_SMS">
+      <intent-filter>
+        <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+      </intent-filter>
+    </receiver>
+    <service
+      android:name="expo.modules.paymentcapture.PaymentNotificationListener"
+      android:label="Pocket Ledger payment drafts"
+      android:exported="true"
+      android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+      <intent-filter>
+        <action android:name="android.service.notification.NotificationListenerService" />
+      </intent-filter>
+    </service>
+  </application>
+</manifest>

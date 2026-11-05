@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+  <exclude domain="sharedpref" path="payment_capture.xml" />
+  <exclude domain="file" path="SQLite/payment-drafts.db" />
+  <exclude domain="file" path="SQLite/payment-drafts.db-wal" />
+  <exclude domain="file" path="SQLite/payment-drafts.db-shm" />
+  <exclude domain="file" path="SQLite/payment-drafts.db-journal" />
+</full-backup-content>

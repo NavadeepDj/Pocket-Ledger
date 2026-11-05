@@ -5,6 +5,8 @@ import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ExpenseProvider } from '@/context/ExpenseContext';
+import { PaymentCaptureProvider } from '@/context/PaymentCaptureContext';
+import { GmailCaptureProvider } from '@/context/GmailCaptureContext';
 import {
   Inter_400Regular,
   Inter_500Medium,
@@ -49,11 +51,15 @@ export default function RootLayout() {
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <ExpenseProvider>
-            <GestureHandlerRootView>
-              <KeyboardProvider>
-                <RootLayoutNav />
-              </KeyboardProvider>
-            </GestureHandlerRootView>
+            <PaymentCaptureProvider>
+              <GmailCaptureProvider>
+              <GestureHandlerRootView>
+                <KeyboardProvider>
+                  <RootLayoutNav />
+                </KeyboardProvider>
+              </GestureHandlerRootView>
+              </GmailCaptureProvider>
+            </PaymentCaptureProvider>
           </ExpenseProvider>
         </QueryClientProvider>
       </ErrorBoundary>

@@ -10,7 +10,8 @@
     "start": "expo start",
     "tunnel": "expo start --tunnel",
     "build:apk": "npx eas-cli build -p android --profile preview",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:services": "node scripts/verify-services.cjs"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
@@ -58,6 +59,8 @@
     "zod-validation-error": "^3.4.0"
   },
   "dependencies": {
+    "@react-native-google-signin/google-signin": "^17.0.0",
+    "base64-js": "^1.5.1",
     "expo-clipboard": "~57.0.2",
     "expo-print": "~57.0.2",
     "expo-sharing": "~57.0.22",

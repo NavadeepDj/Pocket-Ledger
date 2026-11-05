@@ -10,6 +10,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -153,6 +154,8 @@ function ExpenseItem({
 export default function ActivityScreen() {
   const insets = useSafeAreaInsets();
   const { expenses, subContexts, loading, reload, deleteExpense, getCategoryInfo, getSubContextInfo } = useExpenses();
+  const [query, setQuery] = useState('');
+  const [flow, setFlow] = useState<'all' | 'spent' | 'received'>('all');
   const [filterContext, setFilterContext] = useState<string>('All');
   const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
@@ -160,13 +163,19 @@ export default function ActivityScreen() {
 
   const filteredExpenses = useMemo(() => {
     return expenses.filter((item) => {
+      if (flow !== 'all' && item.direction !== flow) return false;
+      const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const searchable = [item.note, item.person, item.category, item.subContext, item.eventTag, String(item.amount)].join(' ').toLowerCase();
+      if (!words.every(word => searchable.includes(word))) return false;
       if (filterContext !== 'All' && item.subContext !== filterContext) return false;
       if (selectedEvent && item.eventTag.trim().toLowerCase() !== selectedEvent.trim().toLowerCase()) return false;
       return true;
     });
-  }, [expenses, filterContext, selectedEvent]);
+  }, [expenses, filterContext, selectedEvent, query, flow]);
 
-  const total = filteredExpenses.reduce((sum, item) => sum + item.amount, 0);
+  const paid = filteredExpenses.filter(e => e.direction === 'spent').reduce((sum, e) => sum + e.amount, 0);
+  const received = filteredExpenses.filter(e => e.direction === 'received').reduce((sum, e) => sum + e.amount, 0);
+  const hasFilters = Boolean(query.trim() || flow !== 'all' || selectedEvent || filterContext !== 'All');
 
   const allContextKeys = useMemo(() => {
     return ['All', ...subContexts.map((s) => s.key)];
@@ -196,7 +205,8 @@ export default function ActivityScreen() {
           { paddingTop: insets.top + 20, paddingBottom: Math.max(insets.bottom, 24) + 84 },
         ]}
         showsVerticalScrollIndicator={false}
-        scrollEnabled={filteredExpenses.length > 0}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         refreshControl={<RefreshControl refreshing={loading} onRefresh={() => void reload()} tintColor={palette.primary} />}
         ListHeaderComponent={
           <View style={styles.header}>
@@ -206,29 +216,31 @@ export default function ActivityScreen() {
                 <Text style={styles.title}>All activity</Text>
               </View>
               <Pressable
-                onPress={() => setShowSmsModal(true)}
+                disabled accessibilityLabel="SMS import paused"
                 style={({ pressed }) => [styles.headerSmsBtn, pressed && styles.pressed]}
               >
                 <Feather name="zap" size={13} color="#6366F1" />
-                <Text style={styles.headerSmsText}>SMS Import</Text>
+                <Text style={styles.headerSmsText}>SMS paused</Text>
               </Pressable>
             </View>
 
-            {/* SUMMARY CARD */}
+            <View style={styles.searchBox}>
+              <Feather name="search" size={17} color={palette.mutedForeground} />
+              <TextInput accessibilityLabel="Search transactions" placeholder="Person, note, category or amount" placeholderTextColor={palette.mutedForeground}
+                value={query} onChangeText={setQuery} style={styles.searchInput} autoCorrect={false} />
+              {query.length > 0 && <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => setQuery('')} hitSlop={10}><Feather name="x" size={17} color={palette.foreground} /></Pressable>}
+            </View>
+            <View style={styles.flowFilters}>{(['all', 'spent', 'received'] as const).map(value => <Pressable key={value}
+              accessibilityRole="button" accessibilityState={{ selected: flow === value }} onPress={() => setFlow(value)}
+              style={[styles.flowFilter, flow === value && { backgroundColor: palette.foreground }]}>
+              <Text style={[styles.filterPillText, flow === value && { color: palette.primaryForeground }]}>{value === 'all' ? 'All payments' : value === 'spent' ? 'Paid' : 'Received'}</Text>
+            </Pressable>)}</View>
             <View style={styles.summary}>
-              <View>
-                <Text style={styles.summaryLabel}>
-                  {selectedEvent
-                    ? `TOTAL FOR #${selectedEvent.toUpperCase()}`
-                    : filterContext !== 'All'
-                    ? `TOTAL FOR ${filterContext.toUpperCase()}`
-                    : 'TOTAL TRACKED'}
-                </Text>
-                <Text style={styles.summaryAmount}>{currency(total)}</Text>
-              </View>
-              <View style={styles.summaryIcon}>
-                <Feather name="archive" size={20} color={palette.primaryForeground} />
-              </View>
+              <View style={{ flex: 1 }}><Text style={styles.summaryLabel}>PAID</Text><Text style={styles.cashValue}>{currency(paid)}</Text></View>
+              <View style={{ flex: 1 }}><Text style={styles.summaryLabel}>RECEIVED</Text><Text style={styles.cashValue}>{currency(received)}</Text></View>
+            </View>
+            <View style={styles.resultsRow}><Text style={styles.hint}>{filteredExpenses.length} {filteredExpenses.length === 1 ? 'entry' : 'entries'} / {hasFilters ? 'matching filters' : 'all dates'}</Text>
+              {hasFilters && <Pressable accessibilityRole="button" onPress={() => { setQuery(''); setFlow('all'); setFilterContext('All'); setSelectedEvent(null); }}><Text style={styles.clearFilters}>Clear filters</Text></Pressable>}
             </View>
 
             {/* FILTER PILLS */}
@@ -289,10 +301,10 @@ export default function ActivityScreen() {
           <View style={styles.empty}>
             <View style={styles.emptyIcon}><Feather name="inbox" size={24} color={palette.primary} /></View>
             <Text style={styles.emptyTitle}>
-              {selectedEvent || filterContext !== 'All' ? 'No matching expenses' : 'Your ledger is clear'}
+              {hasFilters ? 'No matching payments' : 'Your ledger is clear'}
             </Text>
             <Text style={styles.emptyText}>
-              {selectedEvent || filterContext !== 'All'
+              {hasFilters
                 ? 'Try changing or clearing your filters above.'
                 : 'Expenses you add from Home will land here, ready to review.'}
             </Text>
@@ -317,6 +329,13 @@ export default function ActivityScreen() {
 }
 
 const styles = StyleSheet.create({
+  searchBox: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, borderRadius: 14, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.card, marginTop: 18 },
+  searchInput: { flex: 1, color: palette.foreground, fontSize: 14, paddingVertical: 14 },
+  flowFilters: { flexDirection: 'row', gap: 8, marginVertical: 14 },
+  flowFilter: { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: 12, backgroundColor: palette.muted },
+  cashValue: { fontFamily: 'Inter_700Bold', fontSize: 23, color: palette.primaryForeground, marginTop: 7 },
+  resultsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 },
+  clearFilters: { color: palette.primary, fontFamily: 'Inter_600SemiBold', fontSize: 12, paddingVertical: 8 },
   screen: { flex: 1, backgroundColor: palette.background },
   content: { paddingHorizontal: 20 },
   header: { marginBottom: 18 },

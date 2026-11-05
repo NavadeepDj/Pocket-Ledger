@@ -281,6 +281,29 @@ To generate an installable Android APK for testing:
 npx eas-cli build --profile preview --platform android
 ```
 
+### Local signed APK (Windows, no cloud build queue)
+
+Install JDK 17 and the Android SDK/NDK required by Expo, and set `JAVA_HOME` and
+`ANDROID_HOME` (the build script also detects the default Windows SDK location).
+Download the **existing** Android signing credentials once with
+`npx eas-cli credentials --platform android`, choosing the preview profile and
+**credentials.json > Download credentials from EAS**. Do not create a new key for
+an update to an existing installation. Keep the key/passwords private and backed
+up securely; `credentials.json`, `credentials/`, and keystores are ignored by Git.
+
+```bash
+npm run build:apk:local
+adb install -r .expo/local-release/pocket-ledger.apk
+```
+
+The default builds ARM64, suitable for the connected Android phone. Use
+`npm run build:apk:local -- all` for all configured Android architectures. The
+script refreshes the generated Android configuration, bundles JavaScript/assets,
+and uses the existing release key via a Gradle init script. The result is a
+standalone release APK; Metro, Expo Go, and a paid EAS plan are not required.
+First builds can download dependencies and compile native code; later builds
+reuse local caches. This command does not upload source to Expo or publish an app.
+
 ### Production Build
 To create production-ready app bundles:
 ```bash

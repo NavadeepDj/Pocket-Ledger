@@ -10,6 +10,7 @@
     "start": "expo start",
     "tunnel": "expo start --tunnel",
     "build:apk": "npx eas-cli build -p android --profile preview",
+    "build:apk:local": "node scripts/build-apk-local.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:services": "node scripts/verify-services.cjs"
   },

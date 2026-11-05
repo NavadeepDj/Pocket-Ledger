@@ -16,6 +16,9 @@ android/
 !modules/payment-capture/android/**
 *.orig.*
 *.jks
+*.keystore
+credentials.json
+credentials/
 *.p8
 *.p12
 *.key

@@ -1,0 +1,24 @@
+import groovy.json.JsonSlurper
+
+// Read secrets only at build time. Never copy them into generated Gradle files.
+gradle.afterProject { project, state ->
+    if (project.path == ':app' && !state.failure) {
+        def repo = project.rootDir.parentFile
+        def credentialsFile = new File(repo, 'credentials.json')
+        if (!credentialsFile.exists()) throw new GradleException('Missing ignored credentials.json. Download the existing Android credentials using eas credentials.')
+        def key = new JsonSlurper().parse(credentialsFile).android?.keystore
+        if (!key?.keystorePath || !key?.keystorePassword || !key?.keyAlias || !key?.keyPassword) {
+            throw new GradleException('Incomplete Android signing configuration in credentials.json.')
+        }
+        def android = project.extensions.getByName('android')
+        if (android.defaultConfig.applicationId != 'com.navadeepdj.pocketledger') {
+            throw new GradleException('Unexpected application ID; refusing to sign this build.')
+        }
+        def signing = android.signingConfigs.create('pocketLedgerRelease')
+        signing.storeFile = new File(repo, key.keystorePath)
+        signing.storePassword = key.keystorePassword
+        signing.keyAlias = key.keyAlias
+        signing.keyPassword = key.keyPassword
+        android.buildTypes.getByName('release').signingConfig = signing
+    }
+}
